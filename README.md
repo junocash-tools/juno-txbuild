@@ -1,11 +1,16 @@
 # juno-txbuild
 
-Online transaction planner that outputs a `TxPlan` for offline signing.
+Online `TxPlan` (v0) builder for offline signing.
 
-Planned support:
+Requires a running `junocashd` (RPC) to source chain state and spend candidates.
 
-- withdrawals from hot wallets
-- sweeps (consolidation) to manage note set / fees
-- rebalancing (hot <-> cold) using offline signing where required
+## Commands
 
-Status: work in progress.
+- `send`: single-output withdrawal plan
+- `send-many`: multi-output withdrawal plan (JSON outputs file)
+- `sweep`: sweep all spendable notes into 1 output
+- `rebalance`: multi-output rebalance plan (JSON outputs file)
+
+## Testing
+
+`make test` runs unit + integration + e2e suites (Dockerized `junocashd` regtest).
