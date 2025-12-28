@@ -264,6 +264,38 @@ func validatePlanBasics(plan types.TxPlan) error {
 		if len(n.Path) != 32 {
 			return errors.New("witness_path")
 		}
+		for _, p := range n.Path {
+			if len(strings.TrimSpace(p)) != 64 {
+				return errors.New("witness_path")
+			}
+			if _, err := hex.DecodeString(strings.TrimSpace(p)); err != nil {
+				return errors.New("witness_path")
+			}
+		}
+		if len(strings.TrimSpace(n.ActionNullifier)) != 64 {
+			return errors.New("action_nullifier")
+		}
+		if _, err := hex.DecodeString(strings.TrimSpace(n.ActionNullifier)); err != nil {
+			return errors.New("action_nullifier")
+		}
+		if len(strings.TrimSpace(n.CMX)) != 64 {
+			return errors.New("cmx")
+		}
+		if _, err := hex.DecodeString(strings.TrimSpace(n.CMX)); err != nil {
+			return errors.New("cmx")
+		}
+		if len(strings.TrimSpace(n.EphemeralKey)) != 64 {
+			return errors.New("ephemeral_key")
+		}
+		if _, err := hex.DecodeString(strings.TrimSpace(n.EphemeralKey)); err != nil {
+			return errors.New("ephemeral_key")
+		}
+		if len(strings.TrimSpace(n.EncCiphertext)) != 104 {
+			return errors.New("enc_ciphertext")
+		}
+		if _, err := hex.DecodeString(strings.TrimSpace(n.EncCiphertext)); err != nil {
+			return errors.New("enc_ciphertext")
+		}
 	}
 	return nil
 }
