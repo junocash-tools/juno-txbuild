@@ -242,14 +242,16 @@ func validatePlanBasics(plan types.TxPlan) error {
 	if plan.ExpiryHeight == 0 {
 		return errors.New("expiry_height")
 	}
-	if len(plan.Outputs) != 1 {
+	if len(plan.Outputs) == 0 {
 		return errors.New("outputs")
 	}
-	if strings.TrimSpace(plan.Outputs[0].ToAddress) == "" {
-		return errors.New("to_address")
-	}
-	if strings.TrimSpace(plan.Outputs[0].AmountZat) == "" {
-		return errors.New("amount_zat")
+	for _, o := range plan.Outputs {
+		if strings.TrimSpace(o.ToAddress) == "" {
+			return errors.New("to_address")
+		}
+		if strings.TrimSpace(o.AmountZat) == "" {
+			return errors.New("amount_zat")
+		}
 	}
 	if strings.TrimSpace(plan.ChangeAddress) == "" {
 		return errors.New("change_address")
