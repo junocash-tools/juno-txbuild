@@ -77,7 +77,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&rpcPass, "rpc-pass", "", "junocashd RPC password")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
-	fs.UintVar(&coinType, "coin-type", 1337, "ZIP-32 coin type")
+	fs.UintVar(&coinType, "coin-type", 8133, "ZIP-32 coin type")
 	fs.UintVar(&account, "account", 0, "unified account id")
 	fs.StringVar(&to, "to", "", "destination unified address (j1...)")
 	fs.StringVar(&amountZat, "amount-zat", "", "amount to send in zatoshis")
