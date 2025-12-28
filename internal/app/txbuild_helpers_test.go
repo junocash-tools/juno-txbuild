@@ -20,7 +20,18 @@ import (
 	"github.com/Abdullah1738/juno-txbuild/internal/testutil/containers"
 )
 
-const testCoinType = uint32(8133)
+func expectedCoinType(chain string) (uint32, bool) {
+	switch strings.ToLower(strings.TrimSpace(chain)) {
+	case "main":
+		return 8133, true
+	case "test":
+		return 8134, true
+	case "regtest":
+		return 8135, true
+	default:
+		return 0, false
+	}
+}
 
 func startJunocashd(t *testing.T) (*containers.Junocashd, *junocashd.Client) {
 	t.Helper()
@@ -83,21 +94,26 @@ func mineAndShieldOnce(t *testing.T, jd *containers.Junocashd, orchardAddr strin
 		t.Fatalf("z_shieldcoinbase: missing opid")
 	}
 
-	waitOpSuccess(t, jd, opid)
+	txid := waitOpSuccess(t, jd, opid)
+	waitWalletTx(t, jd, txid)
 
-	if _, err := jd.ExecCLI(ctx, "generate", "1"); err != nil {
-		t.Fatalf("confirm: %v", err)
+	if _, err := jd.ExecCLI(ctx, "generate", "2"); err != nil {
+		t.Fatalf("confirm blocks: %v", err)
 	}
+	waitSpendableOrchardNote(t, jd)
 }
 
-func waitOpSuccess(t *testing.T, jd *containers.Junocashd, opid string) {
+func waitOpSuccess(t *testing.T, jd *containers.Junocashd, opid string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	type op struct {
 		Status string `json:"status"`
-		Error  struct {
+		Result struct {
+			TxID string `json:"txid"`
+		} `json:"result,omitempty"`
+		Error struct {
 			Message string `json:"message"`
 		} `json:"error,omitempty"`
 	}
@@ -119,7 +135,11 @@ func waitOpSuccess(t *testing.T, jd *containers.Junocashd, opid string) {
 		}
 		switch strings.ToLower(strings.TrimSpace(ops[0].Status)) {
 		case "success":
-			return
+			txid := strings.TrimSpace(ops[0].Result.TxID)
+			if txid == "" {
+				t.Fatalf("operation missing txid")
+			}
+			return txid
 		case "failed":
 			msg := strings.TrimSpace(ops[0].Error.Message)
 			if msg == "" {
@@ -137,6 +157,59 @@ func waitOpSuccess(t *testing.T, jd *containers.Junocashd, opid string) {
 	}
 }
 
+func waitWalletTx(t *testing.T, jd *containers.Junocashd, txid string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		_, err := jd.ExecCLI(ctx, "gettransaction", txid)
+		if err == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("tx not seen by wallet")
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitSpendableOrchardNote(t *testing.T, jd *containers.Junocashd) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		raw, err := jd.ExecCLI(ctx, "z_listunspent", "1", "9999999", "true")
+		if err == nil {
+			var notes []struct {
+				Pool      string  `json:"pool"`
+				Spendable bool    `json:"spendable"`
+				Amount    float64 `json:"amount"`
+			}
+			if err := json.Unmarshal(raw, &notes); err == nil {
+				for _, n := range notes {
+					if strings.ToLower(strings.TrimSpace(n.Pool)) == "orchard" && n.Spendable && n.Amount > 0 {
+						return
+					}
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("orchard note not spendable")
+		case <-ticker.C:
+		}
+	}
+}
+
 func validatePlanBasics(plan types.TxPlan) error {
 	if plan.Version != types.V0 {
 		return errors.New("version")
@@ -147,7 +220,8 @@ func validatePlanBasics(plan types.TxPlan) error {
 	if strings.TrimSpace(plan.WalletID) == "" {
 		return errors.New("wallet_id")
 	}
-	if plan.CoinType != testCoinType {
+	want, ok := expectedCoinType(plan.Chain)
+	if !ok || plan.CoinType != want {
 		return errors.New("coin_type")
 	}
 	if strings.TrimSpace(plan.Chain) == "" {
@@ -201,4 +275,3 @@ func repoRoot() string {
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
-

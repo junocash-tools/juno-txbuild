@@ -26,7 +26,7 @@ func TestIntegration_PlanSend(t *testing.T) {
 		RPCPass: jd.RPCPassword,
 
 		WalletID: "test-wallet",
-		CoinType: testCoinType,
+		CoinType: 0,
 		Account:  0,
 
 		ToAddress:     toAddr,

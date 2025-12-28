@@ -51,7 +51,7 @@ func TestE2E_CLI_SendBuildsTxPlan(t *testing.T) {
 	}
 
 	var resp struct {
-		Status string      `json:"status"`
+		Status string       `json:"status"`
 		Data   types.TxPlan `json:"data"`
 	}
 	if err := json.Unmarshal(out, &resp); err != nil {

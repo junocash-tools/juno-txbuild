@@ -73,6 +73,20 @@ func PlanSend(ctx context.Context, cfg SendConfig) (types.TxPlan, error) {
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+
+	coinType := cfg.CoinType
+	if coinType == 0 {
+		switch strings.ToLower(strings.TrimSpace(chainInfo.Chain)) {
+		case "main":
+			coinType = 8133
+		case "test":
+			coinType = 8134
+		case "regtest":
+			coinType = 8135
+		default:
+			return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "unknown chain"}
+		}
+	}
 	if chainInfo.Height < 0 {
 		return types.TxPlan{}, errors.New("txbuild: invalid chain height")
 	}
@@ -146,7 +160,7 @@ func PlanSend(ctx context.Context, cfg SendConfig) (types.TxPlan, error) {
 		Version:      types.V0,
 		Kind:         types.TxPlanKindWithdrawal,
 		WalletID:     cfg.WalletID,
-		CoinType:     cfg.CoinType,
+		CoinType:     coinType,
 		Account:      cfg.Account,
 		Chain:        chainInfo.Chain,
 		BranchID:     chainInfo.BranchID,
