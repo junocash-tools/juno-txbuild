@@ -13,15 +13,18 @@ type UnspentNote struct {
 	ValueZat    uint64
 }
 
-func RequiredFeeSend(spendCount int) uint64 {
+func RequiredFeeSend(spendCount, outputCount int) uint64 {
 	actions := spendCount
+	if outputCount > actions {
+		actions = outputCount
+	}
 	if actions < 2 {
 		actions = 2
 	}
 	return 5_000 * uint64(actions)
 }
 
-func SelectNotes(notes []UnspentNote, amountZat uint64) ([]UnspentNote, uint64, error) {
+func SelectNotes(notes []UnspentNote, amountZat uint64, outputCount int) ([]UnspentNote, uint64, error) {
 	sort.Slice(notes, func(i, j int) bool {
 		if notes[i].ValueZat != notes[j].ValueZat {
 			return notes[i].ValueZat > notes[j].ValueZat
@@ -37,13 +40,22 @@ func SelectNotes(notes []UnspentNote, amountZat uint64) ([]UnspentNote, uint64, 
 	for _, n := range notes {
 		selected = append(selected, n)
 		total += n.ValueZat
-		fee := RequiredFeeSend(len(selected))
-		need, ok := addUint64(amountZat, fee)
+		// Fee assumes we will produce a change output, unless the selected notes exactly
+		// match the required amount and fee is unchanged without change (e.g. spend-count
+		// dominates).
+		feeWithChange := RequiredFeeSend(len(selected), outputCount+1)
+		need, ok := addUint64(amountZat, feeWithChange)
 		if !ok {
 			return nil, 0, errors.New("overflow")
 		}
-		if total >= need {
-			return selected, fee, nil
+		if total > need {
+			return selected, feeWithChange, nil
+		}
+		if total == need {
+			feeNoChange := RequiredFeeSend(len(selected), outputCount)
+			if feeNoChange == feeWithChange {
+				return selected, feeWithChange, nil
+			}
 		}
 	}
 	return nil, 0, errors.New("insufficient funds")
