@@ -16,6 +16,8 @@ import (
 	"github.com/Abdullah1738/juno-txbuild/pkg/txbuild"
 )
 
+const jsonVersionV1 = "v1"
+
 func Run(args []string) int {
 	return RunWithIO(args, os.Stdout, os.Stderr)
 }
@@ -339,8 +341,9 @@ func writePlan(stdout, stderr io.Writer, jsonOut bool, outPath string, plan type
 
 	if jsonOut {
 		_ = json.NewEncoder(stdout).Encode(map[string]any{
-			"status": "ok",
-			"data":   plan,
+			"version": jsonVersionV1,
+			"status":  "ok",
+			"data":    plan,
 		})
 		return 0
 	}
@@ -370,7 +373,8 @@ func rpcConfigFromFlags(url, user, pass string) (string, string, string, error) 
 func writeErr(stdout, stderr io.Writer, jsonOut bool, code types.ErrorCode, msg string) int {
 	if jsonOut {
 		_ = json.NewEncoder(stdout).Encode(map[string]any{
-			"status": "err",
+			"version": jsonVersionV1,
+			"status":  "err",
 			"error": map[string]any{
 				"code":    code,
 				"message": msg,

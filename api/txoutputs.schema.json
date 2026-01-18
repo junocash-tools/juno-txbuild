@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TxOutputs",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/TxOutput"
+  },
+  "$defs": {
+    "TxOutput": {
+      "type": "object",
+      "required": ["to_address", "amount_zat"],
+      "properties": {
+        "to_address": {
+          "type": "string",
+          "description": "Unified address (e.g. j1...)"
+        },
+        "amount_zat": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal zatoshis (uint64 encoded as string)"
+        },
+        "memo_hex": {
+          "type": "string",
+          "description": "Optional memo bytes, hex-encoded (max 512 bytes)"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
