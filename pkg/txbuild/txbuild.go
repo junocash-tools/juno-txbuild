@@ -2,6 +2,7 @@ package txbuild
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Abdullah1738/juno-sdk-go/junocashd"
+	"github.com/Abdullah1738/juno-sdk-go/junoscan"
 	"github.com/Abdullah1738/juno-sdk-go/types"
 	"github.com/Abdullah1738/juno-txbuild/internal/chain"
 	"github.com/Abdullah1738/juno-txbuild/internal/logic"
@@ -19,6 +21,8 @@ type SendConfig struct {
 	RPCURL  string
 	RPCUser string
 	RPCPass string
+
+	ScanURL string
 
 	WalletID string
 	CoinType uint32
@@ -40,6 +44,8 @@ func PlanSend(ctx context.Context, cfg SendConfig) (types.TxPlan, error) {
 		RPCUser: cfg.RPCUser,
 		RPCPass: cfg.RPCPass,
 
+		ScanURL: cfg.ScanURL,
+
 		WalletID: cfg.WalletID,
 		CoinType: cfg.CoinType,
 		Account:  cfg.Account,
@@ -60,6 +66,8 @@ type PlanConfig struct {
 	RPCUser string
 	RPCPass string
 
+	ScanURL string
+
 	WalletID string
 	CoinType uint32
 	Account  uint32
@@ -76,6 +84,7 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	cfg.RPCURL = strings.TrimSpace(cfg.RPCURL)
 	cfg.RPCUser = strings.TrimSpace(cfg.RPCUser)
 	cfg.RPCPass = strings.TrimSpace(cfg.RPCPass)
+	cfg.ScanURL = strings.TrimSpace(cfg.ScanURL)
 	cfg.WalletID = strings.TrimSpace(cfg.WalletID)
 	cfg.ChangeAddress = strings.TrimSpace(cfg.ChangeAddress)
 
@@ -152,6 +161,10 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, errors.New("txbuild: chain height too large")
 	}
 	anchorHeight := uint32(chainInfo.Height)
+
+	if cfg.ScanURL != "" {
+		return planWithScan(ctx, rpc, chainInfo, coinType, cfg, totalOut)
+	}
 
 	orchard, err := chain.BuildOrchardIndex(ctx, rpc, int64(anchorHeight))
 	if err != nil {
@@ -238,6 +251,8 @@ type SweepConfig struct {
 	RPCUser string
 	RPCPass string
 
+	ScanURL string
+
 	WalletID string
 	CoinType uint32
 	Account  uint32
@@ -254,6 +269,7 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 	cfg.RPCURL = strings.TrimSpace(cfg.RPCURL)
 	cfg.RPCUser = strings.TrimSpace(cfg.RPCUser)
 	cfg.RPCPass = strings.TrimSpace(cfg.RPCPass)
+	cfg.ScanURL = strings.TrimSpace(cfg.ScanURL)
 	cfg.WalletID = strings.TrimSpace(cfg.WalletID)
 	cfg.ToAddress = strings.TrimSpace(cfg.ToAddress)
 	cfg.MemoHex = strings.TrimSpace(cfg.MemoHex)
@@ -305,6 +321,10 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, errors.New("txbuild: chain height too large")
 	}
 	anchorHeight := uint32(chainInfo.Height)
+
+	if cfg.ScanURL != "" {
+		return planSweepWithScan(ctx, rpc, chainInfo, coinType, cfg)
+	}
 
 	orchard, err := chain.BuildOrchardIndex(ctx, rpc, int64(anchorHeight))
 	if err != nil {
@@ -395,6 +415,334 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 		Notes:         planNotes,
 	}
 	return plan, nil
+}
+
+type spendableNote struct {
+	TxID        string
+	ActionIndex uint32
+	Height      int64
+	Position    uint32
+	ValueZat    uint64
+}
+
+func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg PlanConfig, totalOut uint64) (types.TxPlan, error) {
+	sc, err := junoscan.New(cfg.ScanURL)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+
+	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if len(notes) == 0 {
+		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
+	}
+
+	selected, feeZat, err := logic.SelectNotes(notesToUnspent(notes), totalOut, len(cfg.Outputs))
+	if err != nil {
+		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
+	}
+
+	noteByOutpoint := make(map[string]spendableNote, len(notes))
+	for _, n := range notes {
+		key := fmt.Sprintf("%s:%d", n.TxID, n.ActionIndex)
+		noteByOutpoint[key] = n
+	}
+
+	positions := make([]uint32, 0, len(selected))
+	planNotes := make([]types.OrchardSpendNote, 0, len(selected))
+	blockCache := make(map[int64]blockV2)
+	for _, n := range selected {
+		key := fmt.Sprintf("%s:%d", n.TxID, n.ActionIndex)
+		meta, ok := noteByOutpoint[key]
+		if !ok {
+			return types.TxPlan{}, errors.New("txbuild: missing note metadata from scan")
+		}
+
+		act, err := orchardActionForNote(ctx, rpc, blockCache, meta.Height, meta.TxID, meta.ActionIndex)
+		if err != nil {
+			return types.TxPlan{}, err
+		}
+
+		positions = append(positions, meta.Position)
+		planNotes = append(planNotes, types.OrchardSpendNote{
+			NoteID:          key,
+			ActionNullifier: act.Nullifier,
+			CMX:             act.CMX,
+			Position:        meta.Position,
+			Path:            nil,
+			EphemeralKey:    act.EphemeralKey,
+			EncCiphertext:   act.EncCiphertext,
+		})
+	}
+
+	wit, err := sc.OrchardWitness(ctx, nil, positions)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if strings.TrimSpace(wit.Root) == "" || len(wit.Paths) != len(positions) {
+		return types.TxPlan{}, errors.New("txbuild: invalid witness response")
+	}
+	if wit.AnchorHeight < 0 || wit.AnchorHeight > int64(^uint32(0)) {
+		return types.TxPlan{}, errors.New("txbuild: invalid witness anchor_height")
+	}
+
+	pathByPos := make(map[uint32][]string, len(wit.Paths))
+	for _, p := range wit.Paths {
+		pathByPos[p.Position] = p.AuthPath
+	}
+	for i := range planNotes {
+		p, ok := pathByPos[planNotes[i].Position]
+		if !ok || len(p) != 32 {
+			return types.TxPlan{}, errors.New("txbuild: witness path missing")
+		}
+		planNotes[i].Path = p
+	}
+
+	expiryHeight := uint32(chainInfo.Height) + cfg.ExpiryOffset
+	if expiryHeight < uint32(chainInfo.Height) {
+		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
+	}
+
+	plan := types.TxPlan{
+		Version:       types.V0,
+		Kind:          cfg.Kind,
+		WalletID:      cfg.WalletID,
+		CoinType:      coinType,
+		Account:       cfg.Account,
+		Chain:         chainInfo.Chain,
+		BranchID:      chainInfo.BranchID,
+		AnchorHeight:  uint32(wit.AnchorHeight),
+		Anchor:        wit.Root,
+		ExpiryHeight:  expiryHeight,
+		Outputs:       cfg.Outputs,
+		ChangeAddress: cfg.ChangeAddress,
+		FeeZat:        strconv.FormatUint(feeZat, 10),
+		Notes:         planNotes,
+	}
+	return plan, nil
+}
+
+func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg SweepConfig) (types.TxPlan, error) {
+	sc, err := junoscan.New(cfg.ScanURL)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+
+	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if len(notes) == 0 {
+		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
+	}
+
+	var totalIn uint64
+	for _, n := range notes {
+		var ok bool
+		totalIn, ok = addUint64(totalIn, n.ValueZat)
+		if !ok {
+			return types.TxPlan{}, errors.New("txbuild: notes sum overflow")
+		}
+	}
+	feeZat := logic.RequiredFeeSend(len(notes), 1)
+	if totalIn <= feeZat {
+		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
+	}
+	amount := totalIn - feeZat
+
+	positions := make([]uint32, 0, len(notes))
+	planNotes := make([]types.OrchardSpendNote, 0, len(notes))
+	blockCache := make(map[int64]blockV2)
+	for _, n := range notes {
+		act, err := orchardActionForNote(ctx, rpc, blockCache, n.Height, n.TxID, n.ActionIndex)
+		if err != nil {
+			return types.TxPlan{}, err
+		}
+		positions = append(positions, n.Position)
+		planNotes = append(planNotes, types.OrchardSpendNote{
+			NoteID:          fmt.Sprintf("%s:%d", n.TxID, n.ActionIndex),
+			ActionNullifier: act.Nullifier,
+			CMX:             act.CMX,
+			Position:        n.Position,
+			Path:            nil,
+			EphemeralKey:    act.EphemeralKey,
+			EncCiphertext:   act.EncCiphertext,
+		})
+	}
+
+	wit, err := sc.OrchardWitness(ctx, nil, positions)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if strings.TrimSpace(wit.Root) == "" || len(wit.Paths) != len(positions) {
+		return types.TxPlan{}, errors.New("txbuild: invalid witness response")
+	}
+	if wit.AnchorHeight < 0 || wit.AnchorHeight > int64(^uint32(0)) {
+		return types.TxPlan{}, errors.New("txbuild: invalid witness anchor_height")
+	}
+	pathByPos := make(map[uint32][]string, len(wit.Paths))
+	for _, p := range wit.Paths {
+		pathByPos[p.Position] = p.AuthPath
+	}
+	for i := range planNotes {
+		p, ok := pathByPos[planNotes[i].Position]
+		if !ok || len(p) != 32 {
+			return types.TxPlan{}, errors.New("txbuild: witness path missing")
+		}
+		planNotes[i].Path = p
+	}
+
+	expiryHeight := uint32(chainInfo.Height) + cfg.ExpiryOffset
+	if expiryHeight < uint32(chainInfo.Height) {
+		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
+	}
+
+	plan := types.TxPlan{
+		Version:      types.V0,
+		Kind:         types.TxPlanKindSweep,
+		WalletID:     cfg.WalletID,
+		CoinType:     coinType,
+		Account:      cfg.Account,
+		Chain:        chainInfo.Chain,
+		BranchID:     chainInfo.BranchID,
+		AnchorHeight: uint32(wit.AnchorHeight),
+		Anchor:       wit.Root,
+		ExpiryHeight: expiryHeight,
+		Outputs: []types.TxOutput{
+			{ToAddress: cfg.ToAddress, AmountZat: strconv.FormatUint(amount, 10), MemoHex: cfg.MemoHex},
+		},
+		ChangeAddress: cfg.ChangeAddress,
+		FeeZat:        strconv.FormatUint(feeZat, 10),
+		Notes:         planNotes,
+	}
+	return plan, nil
+}
+
+func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, walletID string, tipHeight int64, minConf int64) ([]spendableNote, error) {
+	raw, err := sc.ListWalletNotes(ctx, walletID, true)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]spendableNote, 0, len(raw))
+	for _, n := range raw {
+		if n.Position == nil || *n.Position < 0 {
+			continue
+		}
+		if n.Height < 0 {
+			continue
+		}
+		if tipHeight < n.Height {
+			continue
+		}
+		conf := tipHeight - n.Height + 1
+		if conf < minConf {
+			continue
+		}
+		if n.ActionIndex < 0 {
+			continue
+		}
+		if n.ValueZat <= 0 {
+			continue
+		}
+		if n.ValueZat > int64(^uint64(0)>>1) {
+			return nil, errors.New("txbuild: note value too large")
+		}
+		if *n.Position > int64(^uint32(0)) {
+			return nil, errors.New("txbuild: note position too large")
+		}
+		out = append(out, spendableNote{
+			TxID:        strings.ToLower(strings.TrimSpace(n.TxID)),
+			ActionIndex: uint32(n.ActionIndex),
+			Height:      n.Height,
+			Position:    uint32(*n.Position),
+			ValueZat:    uint64(n.ValueZat),
+		})
+	}
+	return out, nil
+}
+
+func notesToUnspent(ns []spendableNote) []logic.UnspentNote {
+	out := make([]logic.UnspentNote, 0, len(ns))
+	for _, n := range ns {
+		out = append(out, logic.UnspentNote{TxID: n.TxID, ActionIndex: n.ActionIndex, ValueZat: n.ValueZat})
+	}
+	return out
+}
+
+type orchardAction struct {
+	Nullifier     string
+	CMX           string
+	EphemeralKey  string
+	EncCiphertext string
+}
+
+type blockV2 struct {
+	Tx []struct {
+		TxID    string `json:"txid"`
+		Orchard struct {
+			Actions []struct {
+				Nullifier     string `json:"nullifier"`
+				CMX           string `json:"cmx"`
+				EphemeralKey  string `json:"ephemeralKey"`
+				EncCiphertext string `json:"encCiphertext"`
+			} `json:"actions"`
+		} `json:"orchard"`
+	} `json:"tx"`
+}
+
+func orchardActionForNote(ctx context.Context, rpc *junocashd.Client, cache map[int64]blockV2, height int64, txid string, actionIndex uint32) (orchardAction, error) {
+	blk, ok := cache[height]
+	if !ok {
+		hash, err := rpc.GetBlockHash(ctx, height)
+		if err != nil {
+			return orchardAction{}, err
+		}
+		if err := rpc.Call(ctx, "getblock", []any{hash, 2}, &blk); err != nil {
+			return orchardAction{}, err
+		}
+		cache[height] = blk
+	}
+
+	txid = strings.ToLower(strings.TrimSpace(txid))
+	for _, t := range blk.Tx {
+		if strings.ToLower(strings.TrimSpace(t.TxID)) != txid {
+			continue
+		}
+		if int(actionIndex) < 0 || int(actionIndex) >= len(t.Orchard.Actions) {
+			return orchardAction{}, errors.New("txbuild: action_index out of range")
+		}
+		a := t.Orchard.Actions[actionIndex]
+		act := orchardAction{
+			Nullifier:     strings.ToLower(strings.TrimSpace(a.Nullifier)),
+			CMX:           strings.ToLower(strings.TrimSpace(a.CMX)),
+			EphemeralKey:  strings.ToLower(strings.TrimSpace(a.EphemeralKey)),
+			EncCiphertext: strings.ToLower(strings.TrimSpace(a.EncCiphertext)),
+		}
+		if len(act.EncCiphertext) >= 104 {
+			act.EncCiphertext = act.EncCiphertext[:104]
+		}
+		if !is32ByteHex(act.Nullifier) || !is32ByteHex(act.CMX) || !is32ByteHex(act.EphemeralKey) {
+			return orchardAction{}, errors.New("txbuild: invalid orchard action encoding")
+		}
+		if len(act.EncCiphertext) != 104 {
+			return orchardAction{}, errors.New("txbuild: invalid orchard action encoding")
+		}
+		if _, err := hex.DecodeString(act.EncCiphertext); err != nil {
+			return orchardAction{}, errors.New("txbuild: invalid orchard action encoding")
+		}
+		return act, nil
+	}
+	return orchardAction{}, errors.New("txbuild: tx not found in block")
+}
+
+func is32ByteHex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
 }
 
 func listUnspentOrchardNotes(ctx context.Context, rpc *junocashd.Client, minConf int64, account uint32) ([]logic.UnspentNote, error) {

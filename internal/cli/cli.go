@@ -53,13 +53,13 @@ func writeUsage(w io.Writer) {
 	fmt.Fprintln(w, "Online TxPlan v0 builder for offline signing.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> --wallet-id <id> --coin-type <n> --account <n> --to <j1..> --amount-zat <zat> --change-address <j1..> [--memo-hex <hex>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j1..> [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> --wallet-id <id> --coin-type <n> --account <n> --to <j1..> [--change-address <j1..>] [--memo-hex <hex>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j1..> [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j1..> --amount-zat <zat> --change-address <j1..> [--memo-hex <hex>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j1..> [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j1..> [--change-address <j1..>] [--memo-hex <hex>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j1..> [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Env:")
-	fmt.Fprintln(w, "  JUNO_RPC_URL, JUNO_RPC_USER, JUNO_RPC_PASS")
+	fmt.Fprintln(w, "  JUNO_RPC_URL, JUNO_RPC_USER, JUNO_RPC_PASS, JUNO_SCAN_URL")
 }
 
 func runSend(args []string, stdout, stderr io.Writer) int {
@@ -69,6 +69,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	var rpcURL string
 	var rpcUser string
 	var rpcPass string
+	var scanURL string
 
 	var walletID string
 	var coinType uint
@@ -86,6 +87,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&rpcURL, "rpc-url", "", "junocashd RPC URL")
 	fs.StringVar(&rpcUser, "rpc-user", "", "junocashd RPC username")
 	fs.StringVar(&rpcPass, "rpc-pass", "", "junocashd RPC password")
+	fs.StringVar(&scanURL, "scan-url", "", "optional juno-scan base URL (http://host:port)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
@@ -109,11 +111,17 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, err.Error())
 	}
+	if strings.TrimSpace(scanURL) == "" {
+		scanURL = os.Getenv("JUNO_SCAN_URL")
+	}
+	scanURL = strings.TrimSpace(scanURL)
 
 	cfg := txbuild.SendConfig{
 		RPCURL:  rpcURL,
 		RPCUser: rpcUser,
 		RPCPass: rpcPass,
+
+		ScanURL: scanURL,
 
 		WalletID: walletID,
 		CoinType: uint32(coinType),
@@ -150,6 +158,7 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	var rpcURL string
 	var rpcUser string
 	var rpcPass string
+	var scanURL string
 
 	var walletID string
 	var coinType uint
@@ -166,6 +175,7 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&rpcURL, "rpc-url", "", "junocashd RPC URL")
 	fs.StringVar(&rpcUser, "rpc-user", "", "junocashd RPC username")
 	fs.StringVar(&rpcPass, "rpc-pass", "", "junocashd RPC password")
+	fs.StringVar(&scanURL, "scan-url", "", "optional juno-scan base URL (http://host:port)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
@@ -188,11 +198,17 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, err.Error())
 	}
+	if strings.TrimSpace(scanURL) == "" {
+		scanURL = os.Getenv("JUNO_SCAN_URL")
+	}
+	scanURL = strings.TrimSpace(scanURL)
 
 	cfg := txbuild.SweepConfig{
 		RPCURL:  rpcURL,
 		RPCUser: rpcUser,
 		RPCPass: rpcPass,
+
+		ScanURL: scanURL,
 
 		WalletID: walletID,
 		CoinType: uint32(coinType),
@@ -228,6 +244,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	var rpcURL string
 	var rpcUser string
 	var rpcPass string
+	var scanURL string
 
 	var walletID string
 	var coinType uint
@@ -243,6 +260,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	fs.StringVar(&rpcURL, "rpc-url", "", "junocashd RPC URL")
 	fs.StringVar(&rpcUser, "rpc-user", "", "junocashd RPC username")
 	fs.StringVar(&rpcPass, "rpc-pass", "", "junocashd RPC password")
+	fs.StringVar(&scanURL, "scan-url", "", "optional juno-scan base URL (http://host:port)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
@@ -274,6 +292,10 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	if err != nil {
 		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, err.Error())
 	}
+	if strings.TrimSpace(scanURL) == "" {
+		scanURL = os.Getenv("JUNO_SCAN_URL")
+	}
+	scanURL = strings.TrimSpace(scanURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -282,6 +304,8 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 		RPCURL:  rpcURL,
 		RPCUser: rpcUser,
 		RPCPass: rpcPass,
+
+		ScanURL: scanURL,
 
 		WalletID: walletID,
 		CoinType: uint32(coinType),

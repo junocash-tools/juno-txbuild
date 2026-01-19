@@ -19,6 +19,7 @@ Environment variables (optional; avoid passing secrets on the command line):
 - `JUNO_RPC_URL`
 - `JUNO_RPC_USER`
 - `JUNO_RPC_PASS`
+- `JUNO_SCAN_URL` (optional; use `juno-scan` for notes + witnesses)
 
 - `send`: single-output withdrawal plan
 - `send-many`: multi-output withdrawal plan (JSON outputs file)
@@ -26,6 +27,12 @@ Environment variables (optional; avoid passing secrets on the command line):
 - `rebalance`: multi-output rebalance plan (JSON outputs file)
 
 Run `juno-txbuild --help` (or `juno-txbuild <command> -h`) for the complete flag reference.
+
+## Optional `juno-scan` integration
+
+By default, `juno-txbuild` uses `junocashd` RPC to enumerate spendable Orchard notes and build witnesses.
+
+If you provide `--scan-url` (or set `JUNO_SCAN_URL`), `juno-txbuild` will source unspent notes + witness paths from `juno-scan` instead, avoiding a full chain rescan per invocation. In this mode, `--wallet-id` is used as the `wallet_id` for `juno-scan`.
 
 ## File formats
 
