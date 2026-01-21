@@ -70,3 +70,21 @@ func TestSelectNotes_MultiOutput_AllowsChangeZeroWhenSpendCountDrivesFee(t *test
 		t.Fatalf("selected=%d want %d", len(selected), 3)
 	}
 }
+
+func TestSelectNotesWithFeePolicy_FeeMultiplier_SelectsMoreNotes(t *testing.T) {
+	notes := []UnspentNote{
+		{TxID: "a", ActionIndex: 0, ValueZat: 75_000},
+		{TxID: "b", ActionIndex: 0, ValueZat: 10_000},
+	}
+
+	selected, fee, err := SelectNotesWithFeePolicy(notes, 60_000, 1, FeePolicy{Multiplier: 2})
+	if err != nil {
+		t.Fatalf("SelectNotesWithFeePolicy: %v", err)
+	}
+	if fee != 20_000 {
+		t.Fatalf("fee=%d want %d", fee, 20_000)
+	}
+	if len(selected) != 2 {
+		t.Fatalf("selected=%d want %d", len(selected), 2)
+	}
+}

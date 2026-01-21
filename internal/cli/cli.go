@@ -53,10 +53,10 @@ func writeUsage(w io.Writer) {
 	fmt.Fprintln(w, "Online TxPlan v0 builder for offline signing.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j1..> --amount-zat <zat> --change-address <j1..> [--memo-hex <hex>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j1..> [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j1..> [--change-address <j1..>] [--memo-hex <hex>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j1..> [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> --amount-zat <zat> --change-address <j*1..> [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Env:")
 	fmt.Fprintln(w, "  JUNO_RPC_URL, JUNO_RPC_USER, JUNO_RPC_PASS, JUNO_SCAN_URL")
@@ -80,6 +80,8 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	var changeAddr string
 	var minconf int64
 	var expiryOffset uint
+	var feeMultiplier uint64
+	var feeAddZat uint64
 
 	var outPath string
 	var jsonOut bool
@@ -92,10 +94,12 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
 	fs.UintVar(&account, "account", 0, "unified account id")
-	fs.StringVar(&to, "to", "", "destination unified address (j1...)")
+	fs.StringVar(&to, "to", "", "destination unified address (j*1...)")
 	fs.StringVar(&amountZat, "amount-zat", "", "amount to send in zatoshis")
 	fs.StringVar(&memoHex, "memo-hex", "", "optional memo bytes (hex, <=512 bytes)")
-	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j1...)")
+	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...)")
+	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
+	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
 	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
 	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
 
@@ -134,6 +138,9 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 
 		MinConfirmations: minconf,
 		ExpiryOffset:     uint32(expiryOffset),
+
+		FeeMultiplier: feeMultiplier,
+		FeeAddZat:     feeAddZat,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -168,6 +175,8 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	var changeAddr string
 	var minconf int64
 	var expiryOffset uint
+	var feeMultiplier uint64
+	var feeAddZat uint64
 
 	var outPath string
 	var jsonOut bool
@@ -180,9 +189,11 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
 	fs.UintVar(&account, "account", 0, "unified account id")
-	fs.StringVar(&to, "to", "", "destination unified address (j1...)")
+	fs.StringVar(&to, "to", "", "destination unified address (j*1...)")
 	fs.StringVar(&memoHex, "memo-hex", "", "optional memo bytes (hex, <=512 bytes)")
-	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j1...) (defaults to --to)")
+	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...) (defaults to --to)")
+	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
+	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
 	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
 	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
 
@@ -220,6 +231,9 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 
 		MinConfirmations: minconf,
 		ExpiryOffset:     uint32(expiryOffset),
+
+		FeeMultiplier: feeMultiplier,
+		FeeAddZat:     feeAddZat,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -253,6 +267,8 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	var changeAddr string
 	var minconf int64
 	var expiryOffset uint
+	var feeMultiplier uint64
+	var feeAddZat uint64
 
 	var outPath string
 	var jsonOut bool
@@ -266,7 +282,9 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
 	fs.UintVar(&account, "account", 0, "unified account id")
 	fs.StringVar(&outputsFile, "outputs-file", "", "path to JSON array of TxOutputs (or - for stdin)")
-	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j1...)")
+	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...)")
+	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
+	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
 	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
 	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
 
@@ -317,6 +335,9 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 
 		MinConfirmations: minconf,
 		ExpiryOffset:     uint32(expiryOffset),
+
+		FeeMultiplier: feeMultiplier,
+		FeeAddZat:     feeAddZat,
 	})
 	if err != nil {
 		var ce types.CodedError

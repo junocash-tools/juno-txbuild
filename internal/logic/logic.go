@@ -13,6 +13,29 @@ type UnspentNote struct {
 	ValueZat    uint64
 }
 
+type FeePolicy struct {
+	Multiplier uint64
+	AddZat     uint64
+}
+
+func (p FeePolicy) Apply(base uint64) (uint64, error) {
+	mult := p.Multiplier
+	if mult == 0 {
+		mult = 1
+	}
+	v, ok := mulUint64(base, mult)
+	if !ok {
+		return 0, errors.New("overflow")
+	}
+	v, ok = addUint64(v, p.AddZat)
+	if !ok {
+		return 0, errors.New("overflow")
+	}
+	return v, nil
+}
+
+// RequiredFeeSend returns the minimum ZIP-317 conventional fee for an Orchard
+// send with the given spend and output counts.
 func RequiredFeeSend(spendCount, outputCount int) uint64 {
 	actions := spendCount
 	if outputCount > actions {
@@ -25,6 +48,10 @@ func RequiredFeeSend(spendCount, outputCount int) uint64 {
 }
 
 func SelectNotes(notes []UnspentNote, amountZat uint64, outputCount int) ([]UnspentNote, uint64, error) {
+	return SelectNotesWithFeePolicy(notes, amountZat, outputCount, FeePolicy{})
+}
+
+func SelectNotesWithFeePolicy(notes []UnspentNote, amountZat uint64, outputCount int, feePolicy FeePolicy) ([]UnspentNote, uint64, error) {
 	sort.Slice(notes, func(i, j int) bool {
 		if notes[i].ValueZat != notes[j].ValueZat {
 			return notes[i].ValueZat > notes[j].ValueZat
@@ -39,11 +66,19 @@ func SelectNotes(notes []UnspentNote, amountZat uint64, outputCount int) ([]Unsp
 	var total uint64
 	for _, n := range notes {
 		selected = append(selected, n)
-		total += n.ValueZat
+		var ok bool
+		total, ok = addUint64(total, n.ValueZat)
+		if !ok {
+			return nil, 0, errors.New("overflow")
+		}
 		// Fee assumes we will produce a change output, unless the selected notes exactly
 		// match the required amount and fee is unchanged without change (e.g. spend-count
 		// dominates).
-		feeWithChange := RequiredFeeSend(len(selected), outputCount+1)
+		feeWithChangeMin := RequiredFeeSend(len(selected), outputCount+1)
+		feeWithChange, err := feePolicy.Apply(feeWithChangeMin)
+		if err != nil {
+			return nil, 0, err
+		}
 		need, ok := addUint64(amountZat, feeWithChange)
 		if !ok {
 			return nil, 0, errors.New("overflow")
@@ -52,7 +87,11 @@ func SelectNotes(notes []UnspentNote, amountZat uint64, outputCount int) ([]Unsp
 			return selected, feeWithChange, nil
 		}
 		if total == need {
-			feeNoChange := RequiredFeeSend(len(selected), outputCount)
+			feeNoChangeMin := RequiredFeeSend(len(selected), outputCount)
+			feeNoChange, err := feePolicy.Apply(feeNoChangeMin)
+			if err != nil {
+				return nil, 0, err
+			}
 			if feeNoChange == feeWithChange {
 				return selected, feeWithChange, nil
 			}
@@ -114,4 +153,14 @@ func addUint64(a, b uint64) (uint64, bool) {
 		return 0, false
 	}
 	return sum, true
+}
+
+func mulUint64(a, b uint64) (uint64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	if a > (^uint64(0))/b {
+		return 0, false
+	}
+	return a * b, true
 }

@@ -36,6 +36,9 @@ type SendConfig struct {
 
 	MinConfirmations int64
 	ExpiryOffset     uint32
+
+	FeeMultiplier uint64
+	FeeAddZat     uint64
 }
 
 func PlanSend(ctx context.Context, cfg SendConfig) (types.TxPlan, error) {
@@ -58,6 +61,9 @@ func PlanSend(ctx context.Context, cfg SendConfig) (types.TxPlan, error) {
 
 		MinConfirmations: cfg.MinConfirmations,
 		ExpiryOffset:     cfg.ExpiryOffset,
+
+		FeeMultiplier: cfg.FeeMultiplier,
+		FeeAddZat:     cfg.FeeAddZat,
 	})
 }
 
@@ -78,6 +84,9 @@ type PlanConfig struct {
 
 	MinConfirmations int64
 	ExpiryOffset     uint32
+
+	FeeMultiplier uint64
+	FeeAddZat     uint64
 }
 
 func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
@@ -110,6 +119,9 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	}
 	if cfg.ExpiryOffset == 0 {
 		cfg.ExpiryOffset = 40
+	}
+	if cfg.FeeMultiplier == 0 {
+		cfg.FeeMultiplier = 1
 	}
 
 	var totalOut uint64
@@ -182,7 +194,12 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
 	}
 
-	selected, feeZat, err := logic.SelectNotes(notes, totalOut, len(cfg.Outputs))
+	feePolicy := logic.FeePolicy{
+		Multiplier: cfg.FeeMultiplier,
+		AddZat:     cfg.FeeAddZat,
+	}
+
+	selected, feeZat, err := logic.SelectNotesWithFeePolicy(notes, totalOut, len(cfg.Outputs), feePolicy)
 	if err != nil {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
 	}
@@ -263,6 +280,9 @@ type SweepConfig struct {
 
 	MinConfirmations int64
 	ExpiryOffset     uint32
+
+	FeeMultiplier uint64
+	FeeAddZat     uint64
 }
 
 func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
@@ -292,6 +312,9 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 	}
 	if cfg.ExpiryOffset == 0 {
 		cfg.ExpiryOffset = 40
+	}
+	if cfg.FeeMultiplier == 0 {
+		cfg.FeeMultiplier = 1
 	}
 
 	rpc := junocashd.New(cfg.RPCURL, cfg.RPCUser, cfg.RPCPass)
@@ -350,7 +373,15 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 			return types.TxPlan{}, errors.New("txbuild: notes sum overflow")
 		}
 	}
-	feeZat := logic.RequiredFeeSend(len(notes), 1)
+	feePolicy := logic.FeePolicy{
+		Multiplier: cfg.FeeMultiplier,
+		AddZat:     cfg.FeeAddZat,
+	}
+	feeMin := logic.RequiredFeeSend(len(notes), 1)
+	feeZat, err := feePolicy.Apply(feeMin)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
 	if totalIn <= feeZat {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
 	}
@@ -439,7 +470,11 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
 	}
 
-	selected, feeZat, err := logic.SelectNotes(notesToUnspent(notes), totalOut, len(cfg.Outputs))
+	feePolicy := logic.FeePolicy{
+		Multiplier: cfg.FeeMultiplier,
+		AddZat:     cfg.FeeAddZat,
+	}
+	selected, feeZat, err := logic.SelectNotesWithFeePolicy(notesToUnspent(notes), totalOut, len(cfg.Outputs), feePolicy)
 	if err != nil {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
 	}
@@ -546,7 +581,15 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 			return types.TxPlan{}, errors.New("txbuild: notes sum overflow")
 		}
 	}
-	feeZat := logic.RequiredFeeSend(len(notes), 1)
+	feePolicy := logic.FeePolicy{
+		Multiplier: cfg.FeeMultiplier,
+		AddZat:     cfg.FeeAddZat,
+	}
+	feeMin := logic.RequiredFeeSend(len(notes), 1)
+	feeZat, err := feePolicy.Apply(feeMin)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
 	if totalIn <= feeZat {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
 	}
@@ -627,6 +670,9 @@ func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, wallet
 	}
 	out := make([]spendableNote, 0, len(raw))
 	for _, n := range raw {
+		if n.PendingSpentTxID != nil && strings.TrimSpace(*n.PendingSpentTxID) != "" {
+			continue
+		}
 		if n.Position == nil || *n.Position < 0 {
 			continue
 		}

@@ -28,6 +28,20 @@ Environment variables (optional; avoid passing secrets on the command line):
 
 Run `juno-txbuild --help` (or `juno-txbuild <command> -h`) for the complete flag reference.
 
+## Fees
+
+By default, `juno-txbuild` sets `fee_zat` to the ZIP-317 conventional fee used by `junocashd`:
+
+- `fee_zat = 5000 * max(2, max(spends, outputs))`
+- where `outputs` includes the change output when `change > 0`
+
+To pay a higher fee (e.g. during congestion, or to reduce time-to-mine), use:
+
+- `--fee-multiplier <n>` (multiplies the conventional fee)
+- `--fee-add-zat <zat>` (adds an absolute zatoshi amount on top)
+
+Note: `junocashd` currently rejects conflicting transactions in the mempool (no replacement/RBF), and Orchard spends cannot be fee-bumped via CPFP. Set the fee you want before broadcasting.
+
 ## Optional `juno-scan` integration
 
 By default, `juno-txbuild` uses `junocashd` RPC to enumerate spendable Orchard notes and build witnesses.
@@ -42,8 +56,8 @@ If you provide `--scan-url` (or set `JUNO_SCAN_URL`), `juno-txbuild` will source
 
 ```json
 [
-  { "to_address": "j1...", "amount_zat": "100000" },
-  { "to_address": "j1...", "amount_zat": "250000", "memo_hex": "..." }
+  { "to_address": "j*1...", "amount_zat": "100000" },
+  { "to_address": "j*1...", "amount_zat": "250000", "memo_hex": "..." }
 ]
 ```
 
