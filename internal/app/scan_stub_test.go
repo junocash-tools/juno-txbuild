@@ -25,7 +25,7 @@ type scanFixture struct {
 	}
 }
 
-func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client) *httptest.Server {
+func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client, bearerToken string) *httptest.Server {
 	t.Helper()
 
 	if ctx == nil {
@@ -40,10 +40,17 @@ func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client) *ht
 		t.Fatalf("scan stub: build fixture: %v", err)
 	}
 
+	bearerToken = strings.TrimSpace(bearerToken)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/wallets/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if bearerToken != "" && !validBearerToken(r, bearerToken) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -114,6 +121,11 @@ func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client) *ht
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if bearerToken != "" && !validBearerToken(r, bearerToken) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		var req struct {
 			Positions []uint32 `json:"positions"`
@@ -154,6 +166,19 @@ func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client) *ht
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func validBearerToken(r *http.Request, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return true
+	}
+	h := strings.TrimSpace(r.Header.Get("Authorization"))
+	parts := strings.Fields(h)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+		return false
+	}
+	return parts[1] == expected
 }
 
 func buildScanFixture(ctx context.Context, rpc *junocashd.Client) (scanFixture, error) {

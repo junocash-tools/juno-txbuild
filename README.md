@@ -20,6 +20,7 @@ Environment variables (optional; avoid passing secrets on the command line):
 - `JUNO_RPC_USER`
 - `JUNO_RPC_PASS`
 - `JUNO_SCAN_URL` (optional; use `juno-scan` for notes + witnesses)
+- `JUNO_SCAN_BEARER_TOKEN` (optional; bearer token for `juno-scan` HTTP API requests)
 
 - `send`: single-output withdrawal plan
 - `send-many`: multi-output withdrawal plan (JSON outputs file)
@@ -52,6 +53,8 @@ Note: `junocashd` currently rejects conflicting transactions in the mempool (no 
 By default, `juno-txbuild` uses `junocashd` RPC to enumerate spendable Orchard notes and build witnesses.
 
 If you provide `--scan-url` (or set `JUNO_SCAN_URL`), `juno-txbuild` will source unspent notes + witness paths from `juno-scan` instead, avoiding a full chain rescan per invocation. In this mode, `--wallet-id` is used as the `wallet_id` for `juno-scan`.
+
+If `juno-scan` is configured with `-api-bearer-token`, pass `--scan-bearer-token` (or set `JUNO_SCAN_BEARER_TOKEN`) so `juno-txbuild` will include `Authorization: Bearer <token>` on all `juno-scan` requests.
 
 ## File formats
 

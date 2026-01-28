@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Abdullah1738/juno-sdk-go/junocashd"
 	"github.com/Abdullah1738/juno-sdk-go/junoscan"
@@ -24,6 +26,9 @@ type SendConfig struct {
 	RPCPass string
 
 	ScanURL string
+	// Optional bearer token for HTTP requests to juno-scan.
+	// Sent as: Authorization: Bearer <token>
+	ScanBearerToken string
 
 	WalletID string
 	CoinType uint32
@@ -49,7 +54,8 @@ func PlanSend(ctx context.Context, cfg SendConfig) (types.TxPlan, error) {
 		RPCUser: cfg.RPCUser,
 		RPCPass: cfg.RPCPass,
 
-		ScanURL: cfg.ScanURL,
+		ScanURL:         cfg.ScanURL,
+		ScanBearerToken: cfg.ScanBearerToken,
 
 		WalletID: cfg.WalletID,
 		CoinType: cfg.CoinType,
@@ -76,6 +82,9 @@ type PlanConfig struct {
 	RPCPass string
 
 	ScanURL string
+	// Optional bearer token for HTTP requests to juno-scan.
+	// Sent as: Authorization: Bearer <token>
+	ScanBearerToken string
 
 	WalletID string
 	CoinType uint32
@@ -98,6 +107,7 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	cfg.RPCUser = strings.TrimSpace(cfg.RPCUser)
 	cfg.RPCPass = strings.TrimSpace(cfg.RPCPass)
 	cfg.ScanURL = strings.TrimSpace(cfg.ScanURL)
+	cfg.ScanBearerToken = strings.TrimSpace(cfg.ScanBearerToken)
 	cfg.WalletID = strings.TrimSpace(cfg.WalletID)
 	cfg.ChangeAddress = strings.TrimSpace(cfg.ChangeAddress)
 
@@ -286,6 +296,9 @@ type SweepConfig struct {
 	RPCPass string
 
 	ScanURL string
+	// Optional bearer token for HTTP requests to juno-scan.
+	// Sent as: Authorization: Bearer <token>
+	ScanBearerToken string
 
 	WalletID string
 	CoinType uint32
@@ -307,6 +320,7 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 	cfg.RPCUser = strings.TrimSpace(cfg.RPCUser)
 	cfg.RPCPass = strings.TrimSpace(cfg.RPCPass)
 	cfg.ScanURL = strings.TrimSpace(cfg.ScanURL)
+	cfg.ScanBearerToken = strings.TrimSpace(cfg.ScanBearerToken)
 	cfg.WalletID = strings.TrimSpace(cfg.WalletID)
 	cfg.ToAddress = strings.TrimSpace(cfg.ToAddress)
 	cfg.MemoHex = strings.TrimSpace(cfg.MemoHex)
@@ -471,6 +485,9 @@ type ConsolidateConfig struct {
 	RPCPass string
 
 	ScanURL string
+	// Optional bearer token for HTTP requests to juno-scan.
+	// Sent as: Authorization: Bearer <token>
+	ScanBearerToken string
 
 	WalletID string
 	CoinType uint32
@@ -494,6 +511,7 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 	cfg.RPCUser = strings.TrimSpace(cfg.RPCUser)
 	cfg.RPCPass = strings.TrimSpace(cfg.RPCPass)
 	cfg.ScanURL = strings.TrimSpace(cfg.ScanURL)
+	cfg.ScanBearerToken = strings.TrimSpace(cfg.ScanBearerToken)
 	cfg.WalletID = strings.TrimSpace(cfg.WalletID)
 	cfg.ToAddress = strings.TrimSpace(cfg.ToAddress)
 	cfg.MemoHex = strings.TrimSpace(cfg.MemoHex)
@@ -664,7 +682,7 @@ type spendableNote struct {
 }
 
 func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg PlanConfig, totalOut uint64) (types.TxPlan, error) {
-	sc, err := junoscan.New(cfg.ScanURL)
+	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -780,7 +798,7 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 }
 
 func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg ConsolidateConfig) (types.TxPlan, error) {
-	sc, err := junoscan.New(cfg.ScanURL)
+	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -898,7 +916,7 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 }
 
 func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg SweepConfig) (types.TxPlan, error) {
-	sc, err := junoscan.New(cfg.ScanURL)
+	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -1075,6 +1093,41 @@ func selectNotesForConsolidation(notes []logic.UnspentNote, maxSpends int, feePo
 	}
 
 	return nil, 0, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
+}
+
+type bearerAuthRoundTripper struct {
+	token string
+	next  http.RoundTripper
+}
+
+func (t bearerAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	next := t.next
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	if t.token == "" {
+		return next.RoundTrip(req)
+	}
+	r2 := req.Clone(req.Context())
+	r2.Header = req.Header.Clone()
+	r2.Header.Set("Authorization", "Bearer "+t.token)
+	return next.RoundTrip(r2)
+}
+
+func newScanClient(baseURL, bearerToken string) (*junoscan.Client, error) {
+	bearerToken = strings.TrimSpace(bearerToken)
+	if bearerToken == "" {
+		return junoscan.New(baseURL)
+	}
+
+	hc := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: bearerAuthRoundTripper{
+			token: bearerToken,
+			next:  http.DefaultTransport,
+		},
+	}
+	return junoscan.New(baseURL, junoscan.WithHTTPClient(hc))
 }
 
 func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, walletID string, tipHeight int64, minConf int64) ([]spendableNote, error) {

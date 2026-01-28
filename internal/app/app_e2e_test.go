@@ -76,7 +76,7 @@ func TestE2E_CLI_SendBuildsTxPlan_WithScanURL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	scanSrv := startScanStub(t, ctx, rpc)
+	scanSrv := startScanStub(t, ctx, rpc, "")
 
 	bin := filepath.Join(repoRoot(), "bin", "juno-txbuild")
 	cmd := exec.CommandContext(
@@ -87,6 +87,60 @@ func TestE2E_CLI_SendBuildsTxPlan_WithScanURL(t *testing.T) {
 		"--rpc-user", jd.RPCUser,
 		"--rpc-pass", jd.RPCPassword,
 		"--scan-url", scanSrv.URL,
+		"--wallet-id", "test-wallet",
+		"--account", "0",
+		"--to", toAddr,
+		"--amount-zat", "1000000",
+		"--change-address", changeAddr,
+		"--json",
+	)
+
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("juno-txbuild: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		t.Fatalf("juno-txbuild: %v", err)
+	}
+
+	var resp struct {
+		Status string       `json:"status"`
+		Data   types.TxPlan `json:"data"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("unexpected status")
+	}
+	if err := validatePlanBasics(resp.Data); err != nil {
+		t.Fatalf("invalid plan: %v", err)
+	}
+}
+
+func TestE2E_CLI_SendBuildsTxPlan_WithScanURL_WithBearerToken(t *testing.T) {
+	jd, rpc := startJunocashd(t)
+
+	changeAddr := unifiedAddress(t, jd, 0)
+	mineAndShieldOnce(t, jd, changeAddr)
+	toAddr := unifiedAddress(t, jd, 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	scanSrv := startScanStub(t, ctx, rpc, "secret")
+
+	bin := filepath.Join(repoRoot(), "bin", "juno-txbuild")
+	cmd := exec.CommandContext(
+		ctx,
+		bin,
+		"send",
+		"--rpc-url", jd.RPCURL,
+		"--rpc-user", jd.RPCUser,
+		"--rpc-pass", jd.RPCPassword,
+		"--scan-url", scanSrv.URL,
+		"--scan-bearer-token", "secret",
 		"--wallet-id", "test-wallet",
 		"--account", "0",
 		"--to", toAddr,

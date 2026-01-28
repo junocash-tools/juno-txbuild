@@ -55,14 +55,14 @@ func writeUsage(w io.Writer) {
 	fmt.Fprintln(w, "Online TxPlan v0 builder for offline signing.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> --amount-zat <zat> --change-address <j*1..> [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild consolidate --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--max-spends <n>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> --amount-zat <zat> --change-address <j*1..> [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild consolidate --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--max-spends <n>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Env:")
-	fmt.Fprintln(w, "  JUNO_RPC_URL, JUNO_RPC_USER, JUNO_RPC_PASS, JUNO_SCAN_URL")
+	fmt.Fprintln(w, "  JUNO_RPC_URL, JUNO_RPC_USER, JUNO_RPC_PASS, JUNO_SCAN_URL, JUNO_SCAN_BEARER_TOKEN")
 }
 
 func runSend(args []string, stdout, stderr io.Writer) int {
@@ -73,6 +73,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	var rpcUser string
 	var rpcPass string
 	var scanURL string
+	var scanBearerToken string
 
 	var walletID string
 	var coinType uint
@@ -94,6 +95,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&rpcUser, "rpc-user", "", "junocashd RPC username")
 	fs.StringVar(&rpcPass, "rpc-pass", "", "junocashd RPC password")
 	fs.StringVar(&scanURL, "scan-url", "", "optional juno-scan base URL (http://host:port)")
+	fs.StringVar(&scanBearerToken, "scan-bearer-token", "", "optional bearer token for juno-scan HTTP API (Authorization: Bearer ...)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
@@ -124,13 +126,21 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 		scanURL = os.Getenv("JUNO_SCAN_URL")
 	}
 	scanURL = strings.TrimSpace(scanURL)
+	if strings.TrimSpace(scanBearerToken) == "" {
+		scanBearerToken = os.Getenv("JUNO_SCAN_BEARER_TOKEN")
+	}
+	if strings.TrimSpace(scanBearerToken) == "" {
+		scanBearerToken = os.Getenv("JUNO_SCAN_API_BEARER_TOKEN")
+	}
+	scanBearerToken = strings.TrimSpace(scanBearerToken)
 
 	cfg := txbuild.SendConfig{
 		RPCURL:  rpcURL,
 		RPCUser: rpcUser,
 		RPCPass: rpcPass,
 
-		ScanURL: scanURL,
+		ScanURL:         scanURL,
+		ScanBearerToken: scanBearerToken,
 
 		WalletID: walletID,
 		CoinType: uint32(coinType),
@@ -172,6 +182,7 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	var rpcUser string
 	var rpcPass string
 	var scanURL string
+	var scanBearerToken string
 
 	var walletID string
 	var coinType uint
@@ -191,6 +202,7 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&rpcUser, "rpc-user", "", "junocashd RPC username")
 	fs.StringVar(&rpcPass, "rpc-pass", "", "junocashd RPC password")
 	fs.StringVar(&scanURL, "scan-url", "", "optional juno-scan base URL (http://host:port)")
+	fs.StringVar(&scanBearerToken, "scan-bearer-token", "", "optional bearer token for juno-scan HTTP API (Authorization: Bearer ...)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
@@ -219,13 +231,21 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 		scanURL = os.Getenv("JUNO_SCAN_URL")
 	}
 	scanURL = strings.TrimSpace(scanURL)
+	if strings.TrimSpace(scanBearerToken) == "" {
+		scanBearerToken = os.Getenv("JUNO_SCAN_BEARER_TOKEN")
+	}
+	if strings.TrimSpace(scanBearerToken) == "" {
+		scanBearerToken = os.Getenv("JUNO_SCAN_API_BEARER_TOKEN")
+	}
+	scanBearerToken = strings.TrimSpace(scanBearerToken)
 
 	cfg := txbuild.SweepConfig{
 		RPCURL:  rpcURL,
 		RPCUser: rpcUser,
 		RPCPass: rpcPass,
 
-		ScanURL: scanURL,
+		ScanURL:         scanURL,
+		ScanBearerToken: scanBearerToken,
 
 		WalletID: walletID,
 		CoinType: uint32(coinType),
@@ -265,6 +285,7 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 	var rpcUser string
 	var rpcPass string
 	var scanURL string
+	var scanBearerToken string
 
 	var walletID string
 	var coinType uint
@@ -285,6 +306,7 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&rpcUser, "rpc-user", "", "junocashd RPC username")
 	fs.StringVar(&rpcPass, "rpc-pass", "", "junocashd RPC password")
 	fs.StringVar(&scanURL, "scan-url", "", "optional juno-scan base URL (http://host:port)")
+	fs.StringVar(&scanBearerToken, "scan-bearer-token", "", "optional bearer token for juno-scan HTTP API (Authorization: Bearer ...)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
@@ -314,13 +336,21 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 		scanURL = os.Getenv("JUNO_SCAN_URL")
 	}
 	scanURL = strings.TrimSpace(scanURL)
+	if strings.TrimSpace(scanBearerToken) == "" {
+		scanBearerToken = os.Getenv("JUNO_SCAN_BEARER_TOKEN")
+	}
+	if strings.TrimSpace(scanBearerToken) == "" {
+		scanBearerToken = os.Getenv("JUNO_SCAN_API_BEARER_TOKEN")
+	}
+	scanBearerToken = strings.TrimSpace(scanBearerToken)
 
 	cfg := txbuild.ConsolidateConfig{
 		RPCURL:  rpcURL,
 		RPCUser: rpcUser,
 		RPCPass: rpcPass,
 
-		ScanURL: scanURL,
+		ScanURL:         scanURL,
+		ScanBearerToken: scanBearerToken,
 
 		WalletID: walletID,
 		CoinType: uint32(coinType),
@@ -362,6 +392,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	var rpcUser string
 	var rpcPass string
 	var scanURL string
+	var scanBearerToken string
 
 	var walletID string
 	var coinType uint
@@ -381,6 +412,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	fs.StringVar(&rpcUser, "rpc-user", "", "junocashd RPC username")
 	fs.StringVar(&rpcPass, "rpc-pass", "", "junocashd RPC password")
 	fs.StringVar(&scanURL, "scan-url", "", "optional juno-scan base URL (http://host:port)")
+	fs.StringVar(&scanBearerToken, "scan-bearer-token", "", "optional bearer token for juno-scan HTTP API (Authorization: Bearer ...)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
@@ -419,6 +451,13 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 		scanURL = os.Getenv("JUNO_SCAN_URL")
 	}
 	scanURL = strings.TrimSpace(scanURL)
+	if strings.TrimSpace(scanBearerToken) == "" {
+		scanBearerToken = os.Getenv("JUNO_SCAN_BEARER_TOKEN")
+	}
+	if strings.TrimSpace(scanBearerToken) == "" {
+		scanBearerToken = os.Getenv("JUNO_SCAN_API_BEARER_TOKEN")
+	}
+	scanBearerToken = strings.TrimSpace(scanBearerToken)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -428,7 +467,8 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 		RPCUser: rpcUser,
 		RPCPass: rpcPass,
 
-		ScanURL: scanURL,
+		ScanURL:         scanURL,
+		ScanBearerToken: scanBearerToken,
 
 		WalletID: walletID,
 		CoinType: uint32(coinType),

@@ -4,10 +4,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/Abdullah1738/juno-sdk-go/junoscan"
 	"github.com/Abdullah1738/juno-sdk-go/types"
 	"github.com/Abdullah1738/juno-txbuild/pkg/txbuild"
 )
@@ -56,7 +58,7 @@ func TestIntegration_PlanSend_WithScanURL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	scanSrv := startScanStub(t, ctx, rpc)
+	scanSrv := startScanStub(t, ctx, rpc, "")
 
 	plan, err := txbuild.PlanSend(ctx, txbuild.SendConfig{
 		RPCURL:  jd.RPCURL,
@@ -81,6 +83,72 @@ func TestIntegration_PlanSend_WithScanURL(t *testing.T) {
 	}
 	if err := validatePlanBasics(plan); err != nil {
 		t.Fatalf("invalid plan: %v", err)
+	}
+}
+
+func TestIntegration_PlanSend_WithScanURL_WithBearerToken(t *testing.T) {
+	jd, rpc := startJunocashd(t)
+
+	changeAddr := unifiedAddress(t, jd, 0)
+	mineAndShieldOnce(t, jd, changeAddr)
+	toAddr := unifiedAddress(t, jd, 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	scanSrv := startScanStub(t, ctx, rpc, "secret")
+
+	plan, err := txbuild.PlanSend(ctx, txbuild.SendConfig{
+		RPCURL:  jd.RPCURL,
+		RPCUser: jd.RPCUser,
+		RPCPass: jd.RPCPassword,
+
+		ScanURL:         scanSrv.URL,
+		ScanBearerToken: "secret",
+
+		WalletID: "test-wallet",
+		CoinType: 0,
+		Account:  0,
+
+		ToAddress:     toAddr,
+		AmountZat:     "1000000",
+		ChangeAddress: changeAddr,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if err := validatePlanBasics(plan); err != nil {
+		t.Fatalf("invalid plan: %v", err)
+	}
+
+	_, err = txbuild.PlanSend(ctx, txbuild.SendConfig{
+		RPCURL:  jd.RPCURL,
+		RPCUser: jd.RPCUser,
+		RPCPass: jd.RPCPassword,
+
+		ScanURL:         scanSrv.URL,
+		ScanBearerToken: "wrong",
+
+		WalletID: "test-wallet",
+		CoinType: 0,
+		Account:  0,
+
+		ToAddress:     toAddr,
+		AmountZat:     "1000000",
+		ChangeAddress: changeAddr,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var he *junoscan.HTTPError
+	if !errors.As(err, &he) || he.StatusCode != 401 {
+		t.Fatalf("expected http 401 error, got %v", err)
 	}
 }
 
@@ -222,14 +290,15 @@ func TestIntegration_PlanConsolidate_WithScanURL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	scanSrv := startScanStub(t, ctx, rpc)
+	scanSrv := startScanStub(t, ctx, rpc, "secret")
 
 	plan, err := txbuild.PlanConsolidate(ctx, txbuild.ConsolidateConfig{
 		RPCURL:  jd.RPCURL,
 		RPCUser: jd.RPCUser,
 		RPCPass: jd.RPCPassword,
 
-		ScanURL: scanSrv.URL,
+		ScanURL:         scanSrv.URL,
+		ScanBearerToken: "secret",
 
 		WalletID: "test-wallet",
 		CoinType: 0,
