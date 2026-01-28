@@ -31,15 +31,15 @@ func TestSelectNotes_AccountsForFeeStepFunction(t *testing.T) {
 	}
 }
 
-func TestSelectNotes_MultiOutput_AvoidsChangeZeroWhenOutputsDriveFee(t *testing.T) {
+func TestSelectNotes_MultiOutput_AllowsChangeZeroWhenOutputsDriveFee(t *testing.T) {
 	notes := []UnspentNote{
 		{TxID: "a", ActionIndex: 0, ValueZat: 75_000},
 		{TxID: "b", ActionIndex: 0, ValueZat: 1_000},
 	}
 
 	// Two outputs means 3 actions if we have change (2 outputs + change).
-	// If the first note exactly matches amount+feeWithChange, we must select
-	// another note so change>0 and the fee assumption remains valid.
+	// If the first note exactly matches amount+feeWithChange, we may select
+	// it and overpay (no change output).
 	selected, fee, err := SelectNotes(notes, 60_000, 2)
 	if err != nil {
 		t.Fatalf("SelectNotes: %v", err)
@@ -47,8 +47,28 @@ func TestSelectNotes_MultiOutput_AvoidsChangeZeroWhenOutputsDriveFee(t *testing.
 	if fee != 15_000 {
 		t.Fatalf("fee=%d want %d", fee, 15_000)
 	}
-	if len(selected) != 2 {
-		t.Fatalf("selected=%d want %d", len(selected), 2)
+	if len(selected) != 1 {
+		t.Fatalf("selected=%d want %d", len(selected), 1)
+	}
+}
+
+func TestSelectNotes_MultiOutput_UsesExactMatchWithoutChangeWhenFeeDrops(t *testing.T) {
+	notes := []UnspentNote{
+		{TxID: "a", ActionIndex: 0, ValueZat: 70_000},
+		{TxID: "b", ActionIndex: 0, ValueZat: 1_000},
+	}
+
+	// With two outputs and no change output, fee is 10000 (2 actions).
+	// If we can match amount+fee exactly, we don't need to assume a change output.
+	selected, fee, err := SelectNotes(notes, 60_000, 2)
+	if err != nil {
+		t.Fatalf("SelectNotes: %v", err)
+	}
+	if fee != 10_000 {
+		t.Fatalf("fee=%d want %d", fee, 10_000)
+	}
+	if len(selected) != 1 {
+		t.Fatalf("selected=%d want %d", len(selected), 1)
 	}
 }
 
@@ -86,5 +106,31 @@ func TestSelectNotesWithFeePolicy_FeeMultiplier_SelectsMoreNotes(t *testing.T) {
 	}
 	if len(selected) != 2 {
 		t.Fatalf("selected=%d want %d", len(selected), 2)
+	}
+}
+
+func TestSuppressDustChange_AddsToFee(t *testing.T) {
+	newFee, suppressed, err := SuppressDustChange(100_001, 90_000, 10_000, 5_000)
+	if err != nil {
+		t.Fatalf("SuppressDustChange: %v", err)
+	}
+	if !suppressed {
+		t.Fatalf("suppressed=false want true")
+	}
+	if newFee != 10_001 {
+		t.Fatalf("newFee=%d want %d", newFee, 10_001)
+	}
+}
+
+func TestSuppressDustChange_NoOpWhenAboveThreshold(t *testing.T) {
+	newFee, suppressed, err := SuppressDustChange(105_000, 90_000, 10_000, 5_000)
+	if err != nil {
+		t.Fatalf("SuppressDustChange: %v", err)
+	}
+	if suppressed {
+		t.Fatalf("suppressed=true want false")
+	}
+	if newFee != 10_000 {
+		t.Fatalf("newFee=%d want %d", newFee, 10_000)
 	}
 }

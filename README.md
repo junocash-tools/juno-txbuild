@@ -24,6 +24,7 @@ Environment variables (optional; avoid passing secrets on the command line):
 - `send`: single-output withdrawal plan
 - `send-many`: multi-output withdrawal plan (JSON outputs file)
 - `sweep`: sweep all spendable notes into 1 output
+- `consolidate`: consolidate many notes into 1 output
 - `rebalance`: multi-output rebalance plan (JSON outputs file)
 
 Run `juno-txbuild --help` (or `juno-txbuild <command> -h`) for the complete flag reference.
@@ -39,6 +40,10 @@ To pay a higher fee (e.g. during congestion, or to reduce time-to-mine), use:
 
 - `--fee-multiplier <n>` (multiplies the conventional fee)
 - `--fee-add-zat <zat>` (adds an absolute zatoshi amount on top)
+
+To avoid creating very small change notes, use:
+
+- `--min-change-zat <zat>`: if computed change is in `(0, min-change-zat)`, `juno-txbuild` adds it to the fee and omits the change output.
 
 Note: `junocashd` currently rejects conflicting transactions in the mempool (no replacement/RBF), and Orchard spends cannot be fee-bumped via CPFP. Set the fee you want before broadcasting.
 

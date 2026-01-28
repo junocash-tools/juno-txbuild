@@ -168,3 +168,93 @@ func TestIntegration_PlanSendMany(t *testing.T) {
 		t.Fatalf("outputs=%d want %d", len(plan.Outputs), 2)
 	}
 }
+
+func TestIntegration_PlanConsolidate(t *testing.T) {
+	jd, _ := startJunocashd(t)
+
+	orchardAddr := unifiedAddress(t, jd, 0)
+	mineAndShieldOnce(t, jd, orchardAddr)
+	mineAndShieldOnce(t, jd, orchardAddr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	plan, err := txbuild.PlanConsolidate(ctx, txbuild.ConsolidateConfig{
+		RPCURL:  jd.RPCURL,
+		RPCUser: jd.RPCUser,
+		RPCPass: jd.RPCPassword,
+
+		WalletID: "test-wallet",
+		CoinType: 0,
+		Account:  0,
+
+		ToAddress:     orchardAddr,
+		ChangeAddress: orchardAddr,
+		MaxSpends:     50,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.Kind != types.TxPlanKindRebalance {
+		t.Fatalf("kind=%q want %q", plan.Kind, types.TxPlanKindRebalance)
+	}
+	if err := validatePlanBasics(plan); err != nil {
+		t.Fatalf("invalid plan: %v", err)
+	}
+	if len(plan.Outputs) != 1 {
+		t.Fatalf("outputs=%d want %d", len(plan.Outputs), 1)
+	}
+	if len(plan.Notes) < 2 {
+		t.Fatalf("notes=%d want >=2", len(plan.Notes))
+	}
+}
+
+func TestIntegration_PlanConsolidate_WithScanURL(t *testing.T) {
+	jd, rpc := startJunocashd(t)
+
+	orchardAddr := unifiedAddress(t, jd, 0)
+	mineAndShieldOnce(t, jd, orchardAddr)
+	mineAndShieldOnce(t, jd, orchardAddr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	scanSrv := startScanStub(t, ctx, rpc)
+
+	plan, err := txbuild.PlanConsolidate(ctx, txbuild.ConsolidateConfig{
+		RPCURL:  jd.RPCURL,
+		RPCUser: jd.RPCUser,
+		RPCPass: jd.RPCPassword,
+
+		ScanURL: scanSrv.URL,
+
+		WalletID: "test-wallet",
+		CoinType: 0,
+		Account:  0,
+
+		ToAddress:     orchardAddr,
+		ChangeAddress: orchardAddr,
+		MaxSpends:     50,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.Kind != types.TxPlanKindRebalance {
+		t.Fatalf("kind=%q want %q", plan.Kind, types.TxPlanKindRebalance)
+	}
+	if err := validatePlanBasics(plan); err != nil {
+		t.Fatalf("invalid plan: %v", err)
+	}
+	if len(plan.Outputs) != 1 {
+		t.Fatalf("outputs=%d want %d", len(plan.Outputs), 1)
+	}
+	if len(plan.Notes) < 2 {
+		t.Fatalf("notes=%d want >=2", len(plan.Notes))
+	}
+}

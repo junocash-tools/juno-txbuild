@@ -38,6 +38,8 @@ func RunWithIO(args []string, stdout, stderr io.Writer) int {
 		return runPlanOutputs(args[1:], types.TxPlanKindWithdrawal, stdout, stderr)
 	case "sweep":
 		return runSweep(args[1:], stdout, stderr)
+	case "consolidate":
+		return runConsolidate(args[1:], stdout, stderr)
 	case "rebalance":
 		return runPlanOutputs(args[1:], types.TxPlanKindRebalance, stdout, stderr)
 	default:
@@ -53,10 +55,11 @@ func writeUsage(w io.Writer) {
 	fmt.Fprintln(w, "Online TxPlan v0 builder for offline signing.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> --amount-zat <zat> --change-address <j*1..> [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> --amount-zat <zat> --change-address <j*1..> [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild consolidate --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--max-spends <n>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Env:")
 	fmt.Fprintln(w, "  JUNO_RPC_URL, JUNO_RPC_USER, JUNO_RPC_PASS, JUNO_SCAN_URL")
@@ -82,6 +85,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	var expiryOffset uint
 	var feeMultiplier uint64
 	var feeAddZat uint64
+	var minChangeZat uint64
 
 	var outPath string
 	var jsonOut bool
@@ -100,6 +104,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...)")
 	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
 	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
+	fs.Uint64Var(&minChangeZat, "min-change-zat", 0, "if change is in (0, min-change-zat), add it to fee and omit change output")
 	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
 	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
 
@@ -141,6 +146,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 
 		FeeMultiplier: feeMultiplier,
 		FeeAddZat:     feeAddZat,
+		MinChangeZat:  minChangeZat,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -251,6 +257,103 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	return writePlan(stdout, stderr, jsonOut, outPath, plan)
 }
 
+func runConsolidate(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("consolidate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var rpcURL string
+	var rpcUser string
+	var rpcPass string
+	var scanURL string
+
+	var walletID string
+	var coinType uint
+	var account uint
+	var to string
+	var memoHex string
+	var changeAddr string
+	var maxSpends int
+	var minconf int64
+	var expiryOffset uint
+	var feeMultiplier uint64
+	var feeAddZat uint64
+
+	var outPath string
+	var jsonOut bool
+
+	fs.StringVar(&rpcURL, "rpc-url", "", "junocashd RPC URL")
+	fs.StringVar(&rpcUser, "rpc-user", "", "junocashd RPC username")
+	fs.StringVar(&rpcPass, "rpc-pass", "", "junocashd RPC password")
+	fs.StringVar(&scanURL, "scan-url", "", "optional juno-scan base URL (http://host:port)")
+
+	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
+	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
+	fs.UintVar(&account, "account", 0, "unified account id")
+	fs.StringVar(&to, "to", "", "destination unified address (j*1...)")
+	fs.StringVar(&memoHex, "memo-hex", "", "optional memo bytes (hex, <=512 bytes)")
+	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...) (defaults to --to)")
+	fs.IntVar(&maxSpends, "max-spends", 50, "max notes to consolidate into 1 output")
+	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
+	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
+	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
+	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
+
+	fs.StringVar(&outPath, "out", "", "optional path to write TxPlan JSON")
+	fs.BoolVar(&jsonOut, "json", false, "JSON output")
+
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 2
+	}
+
+	rpcURL, rpcUser, rpcPass, err := rpcConfigFromFlags(rpcURL, rpcUser, rpcPass)
+	if err != nil {
+		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, err.Error())
+	}
+	if strings.TrimSpace(scanURL) == "" {
+		scanURL = os.Getenv("JUNO_SCAN_URL")
+	}
+	scanURL = strings.TrimSpace(scanURL)
+
+	cfg := txbuild.ConsolidateConfig{
+		RPCURL:  rpcURL,
+		RPCUser: rpcUser,
+		RPCPass: rpcPass,
+
+		ScanURL: scanURL,
+
+		WalletID: walletID,
+		CoinType: uint32(coinType),
+		Account:  uint32(account),
+
+		ToAddress:     to,
+		MemoHex:       memoHex,
+		ChangeAddress: changeAddr,
+
+		MaxSpends: maxSpends,
+
+		MinConfirmations: minconf,
+		ExpiryOffset:     uint32(expiryOffset),
+
+		FeeMultiplier: feeMultiplier,
+		FeeAddZat:     feeAddZat,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	plan, err := txbuild.PlanConsolidate(ctx, cfg)
+	if err != nil {
+		var ce types.CodedError
+		if errors.As(err, &ce) {
+			return writeErr(stdout, stderr, jsonOut, ce.Code, ce.Message)
+		}
+		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, err.Error())
+	}
+
+	return writePlan(stdout, stderr, jsonOut, outPath, plan)
+}
+
 func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet(string(kind), flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -269,6 +372,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	var expiryOffset uint
 	var feeMultiplier uint64
 	var feeAddZat uint64
+	var minChangeZat uint64
 
 	var outPath string
 	var jsonOut bool
@@ -285,6 +389,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...)")
 	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
 	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
+	fs.Uint64Var(&minChangeZat, "min-change-zat", 0, "if change is in (0, min-change-zat), add it to fee and omit change output")
 	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
 	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
 
@@ -338,6 +443,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 
 		FeeMultiplier: feeMultiplier,
 		FeeAddZat:     feeAddZat,
+		MinChangeZat:  minChangeZat,
 	})
 	if err != nil {
 		var ce types.CodedError

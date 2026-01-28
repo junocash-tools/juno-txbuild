@@ -238,3 +238,62 @@ func TestE2E_CLI_SendManyBuildsTxPlan(t *testing.T) {
 		t.Fatalf("invalid plan: %v", err)
 	}
 }
+
+func TestE2E_CLI_ConsolidateBuildsTxPlan(t *testing.T) {
+	jd, _ := startJunocashd(t)
+
+	addr := unifiedAddress(t, jd, 0)
+	mineAndShieldOnce(t, jd, addr)
+	mineAndShieldOnce(t, jd, addr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	bin := filepath.Join(repoRoot(), "bin", "juno-txbuild")
+	cmd := exec.CommandContext(
+		ctx,
+		bin,
+		"consolidate",
+		"--rpc-url", jd.RPCURL,
+		"--rpc-user", jd.RPCUser,
+		"--rpc-pass", jd.RPCPassword,
+		"--wallet-id", "test-wallet",
+		"--account", "0",
+		"--to", addr,
+		"--change-address", addr,
+		"--max-spends", "50",
+		"--json",
+	)
+
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("juno-txbuild: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		t.Fatalf("juno-txbuild: %v", err)
+	}
+
+	var resp struct {
+		Status string       `json:"status"`
+		Data   types.TxPlan `json:"data"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("unexpected status")
+	}
+	if resp.Data.Kind != types.TxPlanKindRebalance {
+		t.Fatalf("unexpected kind")
+	}
+	if err := validatePlanBasics(resp.Data); err != nil {
+		t.Fatalf("invalid plan: %v", err)
+	}
+	if len(resp.Data.Outputs) != 1 {
+		t.Fatalf("unexpected outputs length")
+	}
+	if len(resp.Data.Notes) < 2 {
+		t.Fatalf("unexpected notes length")
+	}
+}
