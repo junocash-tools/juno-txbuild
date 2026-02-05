@@ -1,6 +1,7 @@
 .PHONY: build rust-build rust-test test test-unit test-integration test-e2e fmt tidy clean
 
 TESTFLAGS ?=
+TESTTIMEOUT ?= 30m
 
 ifneq ($(JUNO_TEST_LOG),)
 TESTFLAGS += -v
@@ -22,15 +23,15 @@ rust-test:
 	cargo test --manifest-path $(RUST_MANIFEST)
 
 test-unit:
-	CGO_ENABLED=0 go test $(TESTFLAGS) ./internal/logic
+	CGO_ENABLED=0 go test $(TESTFLAGS) -timeout=$(TESTTIMEOUT) ./internal/logic
 
 test-integration:
 	$(MAKE) rust-build
-	go test $(TESTFLAGS) -tags=integration ./...
+	go test $(TESTFLAGS) -timeout=$(TESTTIMEOUT) -tags=integration ./...
 
 test-e2e:
 	$(MAKE) build
-	go test $(TESTFLAGS) -tags=e2e ./...
+	go test $(TESTFLAGS) -timeout=$(TESTTIMEOUT) -tags=e2e ./...
 
 test: test-unit test-integration test-e2e
 

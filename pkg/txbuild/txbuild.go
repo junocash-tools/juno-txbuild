@@ -42,6 +42,7 @@ type SendConfig struct {
 
 	MinConfirmations int64
 	ExpiryOffset     uint32
+	MinNoteZat       uint64
 
 	FeeMultiplier uint64
 	FeeAddZat     uint64
@@ -69,6 +70,7 @@ func PlanSend(ctx context.Context, cfg SendConfig) (types.TxPlan, error) {
 
 		MinConfirmations: cfg.MinConfirmations,
 		ExpiryOffset:     cfg.ExpiryOffset,
+		MinNoteZat:       cfg.MinNoteZat,
 
 		FeeMultiplier: cfg.FeeMultiplier,
 		FeeAddZat:     cfg.FeeAddZat,
@@ -96,6 +98,7 @@ type PlanConfig struct {
 
 	MinConfirmations int64
 	ExpiryOffset     uint32
+	MinNoteZat       uint64
 
 	FeeMultiplier uint64
 	FeeAddZat     uint64
@@ -204,6 +207,7 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+	notes = logic.FilterNotesMinValue(notes, cfg.MinNoteZat)
 	if len(notes) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
 	}
@@ -310,6 +314,7 @@ type SweepConfig struct {
 
 	MinConfirmations int64
 	ExpiryOffset     uint32
+	MinNoteZat       uint64
 
 	FeeMultiplier uint64
 	FeeAddZat     uint64
@@ -392,6 +397,7 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+	notes = logic.FilterNotesMinValue(notes, cfg.MinNoteZat)
 	if len(notes) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
 	}
@@ -501,6 +507,7 @@ type ConsolidateConfig struct {
 
 	MinConfirmations int64
 	ExpiryOffset     uint32
+	MinNoteZat       uint64
 
 	FeeMultiplier uint64
 	FeeAddZat     uint64
@@ -586,6 +593,7 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+	notes = logic.FilterNotesMinValue(notes, cfg.MinNoteZat)
 	if len(notes) < 2 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "not enough spendable notes to consolidate"}
 	}
@@ -691,7 +699,9 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 	if err != nil {
 		return types.TxPlan{}, err
 	}
-	if len(notes) == 0 {
+
+	unspent := logic.FilterNotesMinValue(notesToUnspent(notes), cfg.MinNoteZat)
+	if len(unspent) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
 	}
 
@@ -699,7 +709,7 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		Multiplier: cfg.FeeMultiplier,
 		AddZat:     cfg.FeeAddZat,
 	}
-	selected, feeZat, err := logic.SelectNotesWithFeePolicy(notesToUnspent(notes), totalOut, len(cfg.Outputs), feePolicy)
+	selected, feeZat, err := logic.SelectNotesWithFeePolicy(unspent, totalOut, len(cfg.Outputs), feePolicy)
 	if err != nil {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
 	}
@@ -807,7 +817,9 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 	if err != nil {
 		return types.TxPlan{}, err
 	}
-	if len(notes) < 2 {
+
+	unspent := logic.FilterNotesMinValue(notesToUnspent(notes), cfg.MinNoteZat)
+	if len(unspent) < 2 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "not enough spendable notes to consolidate"}
 	}
 
@@ -815,7 +827,7 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 		Multiplier: cfg.FeeMultiplier,
 		AddZat:     cfg.FeeAddZat,
 	}
-	selected, feeZat, err := selectNotesForConsolidation(notesToUnspent(notes), cfg.MaxSpends, feePolicy)
+	selected, feeZat, err := selectNotesForConsolidation(unspent, cfg.MaxSpends, feePolicy)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -924,6 +936,15 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations)
 	if err != nil {
 		return types.TxPlan{}, err
+	}
+	if cfg.MinNoteZat > 0 {
+		filtered := notes[:0]
+		for _, n := range notes {
+			if n.ValueZat >= cfg.MinNoteZat {
+				filtered = append(filtered, n)
+			}
+		}
+		notes = filtered
 	}
 	if len(notes) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}

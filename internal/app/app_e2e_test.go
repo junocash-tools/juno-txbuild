@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,93 @@ func TestE2E_CLI_SendBuildsTxPlan(t *testing.T) {
 	}
 	if err := validatePlanBasics(resp.Data); err != nil {
 		t.Fatalf("invalid plan: %v", err)
+	}
+
+	shieldCoinbase(t, jd, changeAddr, 2)
+	notes := waitSpendableOrchardNoteCount(t, jd, 0, 2)
+
+	var minNote, maxNote uint64
+	for i, n := range notes {
+		if i == 0 || n.ValueZat < minNote {
+			minNote = n.ValueZat
+		}
+		if n.ValueZat > maxNote {
+			maxNote = n.ValueZat
+		}
+	}
+	if minNote == 0 || maxNote == 0 || minNote == maxNote {
+		t.Fatalf("unexpected note values (min=%d max=%d)", minNote, maxNote)
+	}
+
+	cmd = exec.CommandContext(
+		ctx,
+		bin,
+		"send",
+		"--rpc-url", jd.RPCURL,
+		"--rpc-user", jd.RPCUser,
+		"--rpc-pass", jd.RPCPassword,
+		"--wallet-id", "test-wallet",
+		"--account", "0",
+		"--to", changeAddr,
+		"--amount-zat", strconv.FormatUint(maxNote, 10),
+		"--change-address", changeAddr,
+		"--json",
+	)
+
+	out, err = cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("juno-txbuild: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		t.Fatalf("juno-txbuild: %v", err)
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("unexpected status")
+	}
+	if len(resp.Data.Notes) < 2 {
+		t.Fatalf("notes=%d want >=2", len(resp.Data.Notes))
+	}
+
+	cmd = exec.CommandContext(
+		ctx,
+		bin,
+		"send",
+		"--rpc-url", jd.RPCURL,
+		"--rpc-user", jd.RPCUser,
+		"--rpc-pass", jd.RPCPassword,
+		"--wallet-id", "test-wallet",
+		"--account", "0",
+		"--to", changeAddr,
+		"--amount-zat", strconv.FormatUint(maxNote, 10),
+		"--change-address", changeAddr,
+		"--min-note-zat", strconv.FormatUint(minNote+1, 10),
+		"--json",
+	)
+
+	out, err = cmd.Output()
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+
+	var errResp struct {
+		Status string `json:"status"`
+		Error  struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(out, &errResp); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if errResp.Status != "err" {
+		t.Fatalf("unexpected status")
+	}
+	if errResp.Error.Code != string(types.ErrCodeInsufficientBalance) {
+		t.Fatalf("unexpected error code: %q (%s)", errResp.Error.Code, errResp.Error.Message)
 	}
 }
 

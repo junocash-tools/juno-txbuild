@@ -134,3 +134,32 @@ func TestSuppressDustChange_NoOpWhenAboveThreshold(t *testing.T) {
 		t.Fatalf("newFee=%d want %d", newFee, 10_000)
 	}
 }
+
+func TestFilterNotesMinValue(t *testing.T) {
+	notes := []UnspentNote{
+		{TxID: "a", ActionIndex: 0, ValueZat: 1},
+		{TxID: "b", ActionIndex: 0, ValueZat: 10},
+		{TxID: "c", ActionIndex: 0, ValueZat: 20},
+	}
+
+	got := FilterNotesMinValue(notes, 10)
+	if len(got) != 2 {
+		t.Fatalf("len=%d want %d", len(got), 2)
+	}
+	if got[0].TxID != "b" || got[0].ValueZat != 10 {
+		t.Fatalf("got[0]=%+v", got[0])
+	}
+	if got[1].TxID != "c" || got[1].ValueZat != 20 {
+		t.Fatalf("got[1]=%+v", got[1])
+	}
+
+	got = FilterNotesMinValue(notes, 0)
+	if len(got) != 3 {
+		t.Fatalf("len=%d want %d", len(got), 3)
+	}
+
+	got = FilterNotesMinValue(notes, 21)
+	if len(got) != 0 {
+		t.Fatalf("len=%d want %d", len(got), 0)
+	}
+}

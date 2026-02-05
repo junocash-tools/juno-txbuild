@@ -13,6 +13,19 @@ type UnspentNote struct {
 	ValueZat    uint64
 }
 
+func FilterNotesMinValue(notes []UnspentNote, minNoteZat uint64) []UnspentNote {
+	if minNoteZat == 0 {
+		return notes
+	}
+	out := make([]UnspentNote, 0, len(notes))
+	for _, n := range notes {
+		if n.ValueZat >= minNoteZat {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 type FeePolicy struct {
 	Multiplier uint64
 	AddZat     uint64

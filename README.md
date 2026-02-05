@@ -46,6 +46,10 @@ To avoid creating very small change notes, use:
 
 - `--min-change-zat <zat>`: if computed change is in `(0, min-change-zat)`, `juno-txbuild` adds it to the fee and omits the change output.
 
+To avoid spending very small notes (dust-like inputs), use:
+
+- `--min-note-zat <zat>`: skips spendable notes with value `< min-note-zat` when selecting inputs.
+
 Note: `junocashd` currently rejects conflicting transactions in the mempool (no replacement/RBF), and Orchard spends cannot be fee-bumped via CPFP. Set the fee you want before broadcasting.
 
 ## Optional `juno-scan` integration

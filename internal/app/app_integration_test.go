@@ -46,6 +46,74 @@ func TestIntegration_PlanSend(t *testing.T) {
 	if err := validatePlanBasics(plan); err != nil {
 		t.Fatalf("invalid plan: %v", err)
 	}
+
+	shieldCoinbase(t, jd, changeAddr, 2)
+	notes := waitSpendableOrchardNoteCount(t, jd, 0, 2)
+	if len(notes) != 2 {
+		t.Fatalf("notes=%d want %d", len(notes), 2)
+	}
+
+	var minNote, maxNote uint64
+	for i, n := range notes {
+		if i == 0 || n.ValueZat < minNote {
+			minNote = n.ValueZat
+		}
+		if n.ValueZat > maxNote {
+			maxNote = n.ValueZat
+		}
+	}
+	if minNote == 0 || maxNote == 0 || minNote == maxNote {
+		t.Fatalf("unexpected note values (min=%d max=%d)", minNote, maxNote)
+	}
+
+	plan, err = txbuild.PlanSend(ctx, txbuild.SendConfig{
+		RPCURL:  jd.RPCURL,
+		RPCUser: jd.RPCUser,
+		RPCPass: jd.RPCPassword,
+
+		WalletID: "test-wallet",
+		CoinType: 0,
+		Account:  0,
+
+		ToAddress:     changeAddr,
+		AmountZat:     strconv.FormatUint(maxNote, 10),
+		ChangeAddress: changeAddr,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+		MinNoteZat:       0,
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan.Notes) < 2 {
+		t.Fatalf("notes=%d want >=2", len(plan.Notes))
+	}
+
+	_, err = txbuild.PlanSend(ctx, txbuild.SendConfig{
+		RPCURL:  jd.RPCURL,
+		RPCUser: jd.RPCUser,
+		RPCPass: jd.RPCPassword,
+
+		WalletID: "test-wallet",
+		CoinType: 0,
+		Account:  0,
+
+		ToAddress:     changeAddr,
+		AmountZat:     strconv.FormatUint(maxNote, 10),
+		ChangeAddress: changeAddr,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+		MinNoteZat:       minNote + 1,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var ce types.CodedError
+	if !errors.As(err, &ce) || ce.Code != types.ErrCodeInsufficientBalance {
+		t.Fatalf("expected insufficient_balance error, got %v", err)
+	}
 }
 
 func TestIntegration_PlanSend_WithScanURL(t *testing.T) {
@@ -57,6 +125,25 @@ func TestIntegration_PlanSend_WithScanURL(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+
+	shieldCoinbase(t, jd, changeAddr, 2)
+	notes := waitSpendableOrchardNoteCount(t, jd, 0, 2)
+	if len(notes) != 2 {
+		t.Fatalf("notes=%d want %d", len(notes), 2)
+	}
+
+	var minNote, maxNote uint64
+	for i, n := range notes {
+		if i == 0 || n.ValueZat < minNote {
+			minNote = n.ValueZat
+		}
+		if n.ValueZat > maxNote {
+			maxNote = n.ValueZat
+		}
+	}
+	if minNote == 0 || maxNote == 0 || minNote == maxNote {
+		t.Fatalf("unexpected note values (min=%d max=%d)", minNote, maxNote)
+	}
 
 	scanSrv := startScanStub(t, ctx, rpc, "")
 
@@ -77,12 +164,66 @@ func TestIntegration_PlanSend_WithScanURL(t *testing.T) {
 
 		MinConfirmations: 1,
 		ExpiryOffset:     40,
+		MinNoteZat:       0,
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	if err := validatePlanBasics(plan); err != nil {
 		t.Fatalf("invalid plan: %v", err)
+	}
+
+	plan, err = txbuild.PlanSend(ctx, txbuild.SendConfig{
+		RPCURL:  jd.RPCURL,
+		RPCUser: jd.RPCUser,
+		RPCPass: jd.RPCPassword,
+
+		ScanURL: scanSrv.URL,
+
+		WalletID: "test-wallet",
+		CoinType: 0,
+		Account:  0,
+
+		ToAddress:     changeAddr,
+		AmountZat:     strconv.FormatUint(maxNote, 10),
+		ChangeAddress: changeAddr,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+		MinNoteZat:       0,
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan.Notes) < 2 {
+		t.Fatalf("notes=%d want >=2", len(plan.Notes))
+	}
+
+	_, err = txbuild.PlanSend(ctx, txbuild.SendConfig{
+		RPCURL:  jd.RPCURL,
+		RPCUser: jd.RPCUser,
+		RPCPass: jd.RPCPassword,
+
+		ScanURL: scanSrv.URL,
+
+		WalletID: "test-wallet",
+		CoinType: 0,
+		Account:  0,
+
+		ToAddress:     changeAddr,
+		AmountZat:     strconv.FormatUint(maxNote, 10),
+		ChangeAddress: changeAddr,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+		MinNoteZat:       minNote + 1,
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var ce types.CodedError
+	if !errors.As(err, &ce) || ce.Code != types.ErrCodeInsufficientBalance {
+		t.Fatalf("expected insufficient_balance error, got %v", err)
 	}
 }
 

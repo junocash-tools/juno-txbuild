@@ -17,6 +17,7 @@ import (
 
 	"github.com/Abdullah1738/juno-sdk-go/junocashd"
 	"github.com/Abdullah1738/juno-sdk-go/types"
+	"github.com/Abdullah1738/juno-txbuild/internal/logic"
 	"github.com/Abdullah1738/juno-txbuild/internal/testutil/containers"
 )
 
@@ -75,11 +76,13 @@ func mineAndShieldOnce(t *testing.T, jd *containers.Junocashd, orchardAddr strin
 	t.Helper()
 	ctx := context.Background()
 
+	startCount := countSpendableOrchardNotesAnyAccount(t, jd)
+
 	if _, err := jd.ExecCLI(ctx, "generate", "101"); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 
-	raw, err := jd.ExecCLI(ctx, "z_shieldcoinbase", "*", orchardAddr)
+	raw, err := jd.ExecCLI(ctx, "z_shieldcoinbase", "*", orchardAddr, "0.01", "1")
 	if err != nil {
 		t.Fatalf("z_shieldcoinbase: %v", err)
 	}
@@ -100,7 +103,38 @@ func mineAndShieldOnce(t *testing.T, jd *containers.Junocashd, orchardAddr strin
 	if _, err := jd.ExecCLI(ctx, "generate", "2"); err != nil {
 		t.Fatalf("confirm blocks: %v", err)
 	}
-	waitSpendableOrchardNote(t, jd)
+	waitSpendableOrchardNoteCountAnyAccount(t, jd, startCount+1)
+}
+
+func shieldCoinbase(t *testing.T, jd *containers.Junocashd, orchardAddr string, limit int) string {
+	t.Helper()
+	if limit <= 0 {
+		t.Fatalf("limit must be > 0")
+	}
+
+	ctx := context.Background()
+	raw, err := jd.ExecCLI(ctx, "z_shieldcoinbase", "*", orchardAddr, "0.01", strconv.Itoa(limit))
+	if err != nil {
+		t.Fatalf("z_shieldcoinbase: %v", err)
+	}
+	var shieldResp struct {
+		OpID string `json:"opid"`
+	}
+	if err := json.Unmarshal(raw, &shieldResp); err != nil {
+		t.Fatalf("z_shieldcoinbase: invalid json")
+	}
+	opid := strings.TrimSpace(shieldResp.OpID)
+	if opid == "" {
+		t.Fatalf("z_shieldcoinbase: missing opid")
+	}
+
+	txid := waitOpSuccess(t, jd, opid)
+	waitWalletTx(t, jd, txid)
+
+	if _, err := jd.ExecCLI(ctx, "generate", "2"); err != nil {
+		t.Fatalf("confirm blocks: %v", err)
+	}
+	return txid
 }
 
 func waitOpSuccess(t *testing.T, jd *containers.Junocashd, opid string) string {
@@ -207,6 +241,131 @@ func waitSpendableOrchardNote(t *testing.T, jd *containers.Junocashd) {
 		select {
 		case <-ctx.Done():
 			t.Fatalf("orchard note not spendable")
+		case <-ticker.C:
+		}
+	}
+}
+
+func countSpendableOrchardNotesAnyAccount(t *testing.T, jd *containers.Junocashd) int {
+	t.Helper()
+	ctx := context.Background()
+
+	raw, err := jd.ExecCLI(ctx, "z_listunspent", "1", "9999999", "true")
+	if err != nil {
+		return 0
+	}
+	var notes []struct {
+		Pool      string `json:"pool"`
+		Spendable bool   `json:"spendable"`
+	}
+	if err := json.Unmarshal(raw, &notes); err != nil {
+		return 0
+	}
+	var count int
+	for _, n := range notes {
+		if strings.ToLower(strings.TrimSpace(n.Pool)) == "orchard" && n.Spendable {
+			count++
+		}
+	}
+	return count
+}
+
+func waitSpendableOrchardNoteCountAnyAccount(t *testing.T, jd *containers.Junocashd, want int) {
+	t.Helper()
+	if want <= 0 {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if countSpendableOrchardNotesAnyAccount(t, jd) >= want {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("orchard notes not spendable (want %d)", want)
+		case <-ticker.C:
+		}
+	}
+}
+
+type spendableOrchardNote struct {
+	TxID     string
+	OutIndex uint32
+	ValueZat uint64
+}
+
+func listSpendableOrchardNotes(t *testing.T, jd *containers.Junocashd, account uint32) []spendableOrchardNote {
+	t.Helper()
+	ctx := context.Background()
+
+	raw, err := jd.ExecCLI(ctx, "z_listunspent", "1", "9999999", "true")
+	if err != nil {
+		t.Fatalf("z_listunspent: %v", err)
+	}
+
+	var notes []struct {
+		TxID      string      `json:"txid"`
+		Pool      string      `json:"pool"`
+		OutIndex  uint32      `json:"outindex"`
+		Spendable bool        `json:"spendable"`
+		Account   *uint32     `json:"account,omitempty"`
+		Amount    json.Number `json:"amount"`
+	}
+	if err := json.Unmarshal(raw, &notes); err != nil {
+		t.Fatalf("z_listunspent: invalid json")
+	}
+
+	out := make([]spendableOrchardNote, 0, len(notes))
+	for _, n := range notes {
+		if strings.ToLower(strings.TrimSpace(n.Pool)) != "orchard" || !n.Spendable {
+			continue
+		}
+		if n.Account != nil && *n.Account != account {
+			continue
+		}
+		txid := strings.ToLower(strings.TrimSpace(n.TxID))
+		if txid == "" {
+			continue
+		}
+		v, err := logic.ParseZECToZat(n.Amount.String())
+		if err != nil || v == 0 {
+			continue
+		}
+		out = append(out, spendableOrchardNote{
+			TxID:     txid,
+			OutIndex: n.OutIndex,
+			ValueZat: v,
+		})
+	}
+	return out
+}
+
+func waitSpendableOrchardNoteCount(t *testing.T, jd *containers.Junocashd, account uint32, want int) []spendableOrchardNote {
+	t.Helper()
+	if want <= 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		notes := listSpendableOrchardNotes(t, jd, account)
+		if len(notes) >= want {
+			return notes
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("orchard notes not spendable (have %d want %d)", len(notes), want)
 		case <-ticker.C:
 		}
 	}
