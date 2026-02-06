@@ -695,7 +695,7 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		return types.TxPlan{}, err
 	}
 
-	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations)
+	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations, cfg.MinNoteZat)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -813,7 +813,7 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 		return types.TxPlan{}, err
 	}
 
-	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations)
+	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations, cfg.MinNoteZat)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -933,18 +933,9 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 		return types.TxPlan{}, err
 	}
 
-	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations)
+	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations, cfg.MinNoteZat)
 	if err != nil {
 		return types.TxPlan{}, err
-	}
-	if cfg.MinNoteZat > 0 {
-		filtered := notes[:0]
-		for _, n := range notes {
-			if n.ValueZat >= cfg.MinNoteZat {
-				filtered = append(filtered, n)
-			}
-		}
-		notes = filtered
 	}
 	if len(notes) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
@@ -1151,48 +1142,77 @@ func newScanClient(baseURL, bearerToken string) (*junoscan.Client, error) {
 	return junoscan.New(baseURL, junoscan.WithHTTPClient(hc))
 }
 
-func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, walletID string, tipHeight int64, minConf int64) ([]spendableNote, error) {
-	raw, err := sc.ListWalletNotes(ctx, walletID, true)
-	if err != nil {
-		return nil, err
+func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, walletID string, tipHeight int64, minConf int64, minNoteZat uint64) ([]spendableNote, error) {
+	maxSignedZat := uint64(^uint64(0) >> 1)
+	if minNoteZat > maxSignedZat {
+		return []spendableNote{}, nil
 	}
-	out := make([]spendableNote, 0, len(raw))
-	for _, n := range raw {
-		if n.PendingSpentTxID != nil && strings.TrimSpace(*n.PendingSpentTxID) != "" {
-			continue
+
+	opts := junoscan.ListWalletNotesOptions{
+		OnlyUnspent: true,
+		Limit:       1000,
+	}
+	if minNoteZat > 0 {
+		opts.MinValueZat = int64(minNoteZat)
+	}
+
+	seenCursor := map[string]struct{}{}
+	out := make([]spendableNote, 0, 1024)
+	for {
+		page, err := sc.ListWalletNotesPage(ctx, walletID, opts)
+		if err != nil {
+			return nil, err
 		}
-		if n.Position == nil || *n.Position < 0 {
-			continue
+		for _, n := range page.Notes {
+			if n.PendingSpentTxID != nil && strings.TrimSpace(*n.PendingSpentTxID) != "" {
+				continue
+			}
+			if n.Position == nil || *n.Position < 0 {
+				continue
+			}
+			if n.Height < 0 {
+				continue
+			}
+			if tipHeight < n.Height {
+				continue
+			}
+			conf := tipHeight - n.Height + 1
+			if conf < minConf {
+				continue
+			}
+			if n.ActionIndex < 0 {
+				continue
+			}
+			if n.ValueZat <= 0 {
+				continue
+			}
+			if minNoteZat > 0 && uint64(n.ValueZat) < minNoteZat {
+				continue
+			}
+			if n.ValueZat > int64(^uint64(0)>>1) {
+				return nil, errors.New("txbuild: note value too large")
+			}
+			if *n.Position > int64(^uint32(0)) {
+				return nil, errors.New("txbuild: note position too large")
+			}
+			out = append(out, spendableNote{
+				TxID:        strings.ToLower(strings.TrimSpace(n.TxID)),
+				ActionIndex: uint32(n.ActionIndex),
+				Height:      n.Height,
+				Position:    uint32(*n.Position),
+				ValueZat:    uint64(n.ValueZat),
+			})
 		}
-		if n.Height < 0 {
-			continue
+
+		next := strings.TrimSpace(page.NextCursor)
+		if next == "" {
+			break
 		}
-		if tipHeight < n.Height {
-			continue
+		if _, ok := seenCursor[next]; ok {
+			return nil, errors.New("txbuild: scan notes cursor did not advance")
 		}
-		conf := tipHeight - n.Height + 1
-		if conf < minConf {
-			continue
-		}
-		if n.ActionIndex < 0 {
-			continue
-		}
-		if n.ValueZat <= 0 {
-			continue
-		}
-		if n.ValueZat > int64(^uint64(0)>>1) {
-			return nil, errors.New("txbuild: note value too large")
-		}
-		if *n.Position > int64(^uint32(0)) {
-			return nil, errors.New("txbuild: note position too large")
-		}
-		out = append(out, spendableNote{
-			TxID:        strings.ToLower(strings.TrimSpace(n.TxID)),
-			ActionIndex: uint32(n.ActionIndex),
-			Height:      n.Height,
-			Position:    uint32(*n.Position),
-			ValueZat:    uint64(n.ValueZat),
-		})
+		seenCursor[next] = struct{}{}
+		opts.Cursor = next
 	}
 	return out, nil
 }
