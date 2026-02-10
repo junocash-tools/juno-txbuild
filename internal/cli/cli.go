@@ -110,7 +110,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	fs.Uint64Var(&minChangeZat, "min-change-zat", 0, "if change is in (0, min-change-zat), add it to fee and omit change output")
 	fs.Uint64Var(&minNoteZat, "min-note-zat", 0, "skip spendable notes with value < min-note-zat")
 	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
-	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
+	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
 
 	fs.StringVar(&outPath, "out", "", "optional path to write TxPlan JSON")
 	fs.BoolVar(&jsonOut, "json", false, "JSON output")
@@ -218,7 +218,7 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
 	fs.Uint64Var(&minNoteZat, "min-note-zat", 0, "skip spendable notes with value < min-note-zat")
 	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
-	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
+	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
 
 	fs.StringVar(&outPath, "out", "", "optional path to write TxPlan JSON")
 	fs.BoolVar(&jsonOut, "json", false, "JSON output")
@@ -326,7 +326,7 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
 	fs.Uint64Var(&minNoteZat, "min-note-zat", 0, "skip spendable notes with value < min-note-zat")
 	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
-	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
+	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
 
 	fs.StringVar(&outPath, "out", "", "optional path to write TxPlan JSON")
 	fs.BoolVar(&jsonOut, "json", false, "JSON output")
@@ -434,7 +434,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	fs.Uint64Var(&minChangeZat, "min-change-zat", 0, "if change is in (0, min-change-zat), add it to fee and omit change output")
 	fs.Uint64Var(&minNoteZat, "min-note-zat", 0, "skip spendable notes with value < min-note-zat")
 	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
-	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from chain tip")
+	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
 
 	fs.StringVar(&outPath, "out", "", "optional path to write TxPlan JSON")
 	fs.BoolVar(&jsonOut, "json", false, "JSON output")

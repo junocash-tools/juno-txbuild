@@ -163,3 +163,23 @@ func TestFilterNotesMinValue(t *testing.T) {
 		t.Fatalf("len=%d want %d", len(got), 0)
 	}
 }
+
+func TestExpiryHeightFromTip(t *testing.T) {
+	got, err := ExpiryHeightFromTip(100, 40)
+	if err != nil {
+		t.Fatalf("ExpiryHeightFromTip: %v", err)
+	}
+	// tip=100 means the next block height is 101.
+	if got != 141 {
+		t.Fatalf("got %d want %d", got, 141)
+	}
+}
+
+func TestExpiryHeightFromTip_Overflow(t *testing.T) {
+	if _, err := ExpiryHeightFromTip(^uint32(0), 40); err == nil {
+		t.Fatalf("expected error")
+	}
+	if _, err := ExpiryHeightFromTip(^uint32(0)-1, 2); err == nil {
+		t.Fatalf("expected error")
+	}
+}

@@ -294,6 +294,22 @@ func ParseZECToZat(s string) (uint64, error) {
 	return w*100_000_000 + f, nil
 }
 
+// ExpiryHeightFromTip computes nExpiryHeight from a chain tip height.
+//
+// A transaction built at chain tip N can only be mined at height N+1 or later,
+// so callers typically choose an expiry offset relative to N+1.
+func ExpiryHeightFromTip(tipHeight uint32, expiryOffset uint32) (uint32, error) {
+	if tipHeight == ^uint32(0) {
+		return 0, errors.New("overflow")
+	}
+	nextHeight := tipHeight + 1
+	expiryHeight := nextHeight + expiryOffset
+	if expiryHeight < nextHeight {
+		return 0, errors.New("overflow")
+	}
+	return expiryHeight, nil
+}
+
 func addUint64(a, b uint64) (uint64, bool) {
 	sum := a + b
 	if sum < a {

@@ -52,6 +52,18 @@ To avoid spending very small notes (dust-like inputs), use:
 
 Note: `junocashd` currently rejects conflicting transactions in the mempool (no replacement/RBF), and Orchard spends cannot be fee-bumped via CPFP. Set the fee you want before broadcasting.
 
+## Transaction expiry
+
+All `TxPlan`s include `expiry_height` (Overwinter `nExpiryHeight`) so transactions that are not mined will eventually become invalid.
+
+`juno-txbuild` computes:
+
+- `expiry_height = (chain_tip_height + 1) + expiry_offset`
+
+where `expiry_offset` is controlled by `--expiry-offset` (default: `40`, min: `4`).
+
+For exchange/custody use, pick an `expiry_offset` that is long enough to tolerate short-lived partitions, but short enough to deterministically release notes if a tx gets stuck.
+
 ## Optional `juno-scan` integration
 
 By default, `juno-txbuild` uses `junocashd` RPC to enumerate spendable Orchard notes and build witnesses.

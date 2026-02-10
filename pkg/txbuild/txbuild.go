@@ -137,6 +137,9 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	if cfg.ExpiryOffset == 0 {
 		cfg.ExpiryOffset = 40
 	}
+	if cfg.ExpiryOffset < 4 {
+		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "expiry_offset must be >= 4"}
+	}
 	if cfg.FeeMultiplier == 0 {
 		cfg.FeeMultiplier = 1
 	}
@@ -270,8 +273,8 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		planNotes[i].Path = wit.Paths[i].AuthPath
 	}
 
-	expiryHeight := anchorHeight + cfg.ExpiryOffset
-	if expiryHeight < anchorHeight {
+	expiryHeight, err := logic.ExpiryHeightFromTip(anchorHeight, cfg.ExpiryOffset)
+	if err != nil {
 		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
 	}
 
@@ -348,6 +351,9 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 	}
 	if cfg.ExpiryOffset == 0 {
 		cfg.ExpiryOffset = 40
+	}
+	if cfg.ExpiryOffset < 4 {
+		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "expiry_offset must be >= 4"}
 	}
 	if cfg.FeeMultiplier == 0 {
 		cfg.FeeMultiplier = 1
@@ -459,8 +465,8 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 		planNotes[i].Path = wit.Paths[i].AuthPath
 	}
 
-	expiryHeight := anchorHeight + cfg.ExpiryOffset
-	if expiryHeight < anchorHeight {
+	expiryHeight, err := logic.ExpiryHeightFromTip(anchorHeight, cfg.ExpiryOffset)
+	if err != nil {
 		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
 	}
 
@@ -544,6 +550,9 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 	}
 	if cfg.ExpiryOffset == 0 {
 		cfg.ExpiryOffset = 40
+	}
+	if cfg.ExpiryOffset < 4 {
+		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "expiry_offset must be >= 4"}
 	}
 	if cfg.FeeMultiplier == 0 {
 		cfg.FeeMultiplier = 1
@@ -655,8 +664,8 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 		planNotes[i].Path = wit.Paths[i].AuthPath
 	}
 
-	expiryHeight := anchorHeight + cfg.ExpiryOffset
-	if expiryHeight < anchorHeight {
+	expiryHeight, err := logic.ExpiryHeightFromTip(anchorHeight, cfg.ExpiryOffset)
+	if err != nil {
 		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
 	}
 
@@ -783,8 +792,8 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		planNotes[i].Path = p
 	}
 
-	expiryHeight := uint32(chainInfo.Height) + cfg.ExpiryOffset
-	if expiryHeight < uint32(chainInfo.Height) {
+	expiryHeight, err := logic.ExpiryHeightFromTip(uint32(chainInfo.Height), cfg.ExpiryOffset)
+	if err != nil {
 		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
 	}
 
@@ -901,8 +910,8 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 		planNotes[i].Path = p
 	}
 
-	expiryHeight := uint32(chainInfo.Height) + cfg.ExpiryOffset
-	if expiryHeight < uint32(chainInfo.Height) {
+	expiryHeight, err := logic.ExpiryHeightFromTip(uint32(chainInfo.Height), cfg.ExpiryOffset)
+	if err != nil {
 		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
 	}
 
@@ -1005,8 +1014,8 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 		planNotes[i].Path = p
 	}
 
-	expiryHeight := uint32(chainInfo.Height) + cfg.ExpiryOffset
-	if expiryHeight < uint32(chainInfo.Height) {
+	expiryHeight, err := logic.ExpiryHeightFromTip(uint32(chainInfo.Height), cfg.ExpiryOffset)
+	if err != nil {
 		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
 	}
 
