@@ -58,7 +58,26 @@ To avoid spending very small notes (dust-like inputs), use:
 
 - `--min-note-zat <zat>`: skips spendable notes with value `< min-note-zat` when selecting inputs.
 
+The base fee counts the change action and the default multiplier gives `100000 * max(2, spends, outputs + change)`, which is exactly the ZIP-317 conventional fee `junocashd` 0.9.13 enforces. A plan built with the defaults is accepted even with `-txunpaidactionlimit=0`.
+
 Note: `junocashd` currently rejects conflicting transactions in the mempool (no replacement/RBF), and Orchard spends cannot be fee-bumped via CPFP. Set the fee you want before broadcasting.
+
+## Extra spends (note top-up)
+
+Wallets that receive many deposits and pay out through `send-many` only ever grow their note count: each withdrawal spends one note and creates one change note. `send-many` and `rebalance` can spend a few extra small notes on each transaction so the count comes back down without a separate consolidation flow:
+
+- `--extra-spends <n>`: add up to `n` notes beyond what the payment needs (default `0`, max `199`).
+- `--extra-spend-max-zat <zat>`: only add notes with value `<= zat` (default `0` = no cap).
+
+Normal selection runs first, unchanged. Then txbuild adds notes from the remaining eligible set, smallest value first. Eligible means the same minconf, `--min-note-zat` and exclusion filters as normal selection, plus the note source's own checks: `z_listunspent` and the anchor-height commitment index over RPC, or the pending-spend and position checks with `--scan-url`. Ties are broken by height, then txid, then action index, so the same inputs always pick the same notes. A note is skipped when its value does not exceed the fee increase it causes, or when it would leave change in `(0, min-change-zat)`. The fee is recomputed over the final spend count and all added value goes to change. Outputs and the change address never change. Top-up stops before exceeding 200 spends or a 10,000,000 zat fee (the `junocashd` absurd-fee limit for `sendrawtransaction`). The fee cap only limits the top-up; it does not change how the base fee is computed.
+
+With `--json`, the envelope reports what was added next to `data`:
+
+```json
+{"version":"v1","status":"ok","data":{...},"selection":{"extra_spends":4,"extra_spend_zat":"2000000"}}
+```
+
+`extra_spend_zat` is a decimal string, like the other zat amounts. Without `--json`, the same numbers are written to stderr. With the default `--extra-spends 0`, selection, the plan and the envelope are unchanged. Go callers can set `PlanConfig.ExtraSpends` and `PlanConfig.ExtraSpendMaxZat` and use `PlanWithReport` to read the counts.
 
 ## Transaction expiry
 
@@ -147,3 +166,5 @@ Error codes are designed to be machine-readable:
 ## Testing
 
 `make test` runs unit + integration + e2e suites (Dockerized `junocashd` regtest).
+
+The e2e suite signs and broadcasts one top-up transaction with `juno-txsign`. It uses `JUNO_TXSIGN_BIN`, or `../juno-txsign/bin/juno-txsign` by default, and fails if neither exists. Set `JUNO_TXSIGN_SKIP=1` to skip that test explicitly.

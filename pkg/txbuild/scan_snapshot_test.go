@@ -34,7 +34,7 @@ func TestScanBackedPlannersReverifyAnchorAfterWitness(t *testing.T) {
 					MinConfirmations: 1,
 					ExpiryOffset:     40,
 					FeeMultiplier:    1,
-				}, 1_000_000, nil)
+				}, 1_000_000, nil, &PlanReport{})
 				return err
 			},
 		},

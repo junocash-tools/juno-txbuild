@@ -111,9 +111,40 @@ type PlanConfig struct {
 	FeeMultiplier uint64
 	FeeAddZat     uint64
 	MinChangeZat  uint64
+
+	// ExtraSpends adds up to this many extra notes on top of the base
+	// selection, smallest first, to shrink the wallet's note count. Extras only
+	// change the spend set, fee and change; outputs are never touched. 0 keeps
+	// the base selection as is.
+	ExtraSpends int
+	// ExtraSpendMaxZat only allows extra notes with value <= this. 0 means no cap.
+	ExtraSpendMaxZat uint64
+}
+
+// PlanReport describes planner decisions that are not part of the TxPlan.
+type PlanReport struct {
+	// ExtraSpends is the number of notes added by the extra spend top-up.
+	ExtraSpends int
+	// ExtraSpendZat is the total value of those notes.
+	ExtraSpendZat uint64
 }
 
 func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
+	plan, _, err := PlanWithReport(ctx, cfg)
+	return plan, err
+}
+
+// PlanWithReport is Plan plus a report of the extra spend top-up.
+func PlanWithReport(ctx context.Context, cfg PlanConfig) (types.TxPlan, PlanReport, error) {
+	var report PlanReport
+	plan, err := planOutputs(ctx, cfg, &report)
+	if err != nil {
+		return types.TxPlan{}, PlanReport{}, err
+	}
+	return plan, report, nil
+}
+
+func planOutputs(ctx context.Context, cfg PlanConfig, report *PlanReport) (types.TxPlan, error) {
 	cfg.RPCURL = strings.TrimSpace(cfg.RPCURL)
 	cfg.RPCUser = strings.TrimSpace(cfg.RPCUser)
 	cfg.RPCPass = strings.TrimSpace(cfg.RPCPass)
@@ -133,6 +164,9 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	}
 	excludedNoteIDs, err := validateExcludedNoteIDs(cfg.ExcludedNoteIDs)
 	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := validateExtraSpends(cfg.ExtraSpends); err != nil {
 		return types.TxPlan{}, err
 	}
 	switch cfg.Kind {
@@ -200,7 +234,7 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	anchorHeight := uint32(chainInfo.Height)
 
 	if cfg.ScanURL != "" {
-		return planWithScan(ctx, rpc, chainInfo, coinType, cfg, totalOut, excludedNoteIDs)
+		return planWithScan(ctx, rpc, chainInfo, coinType, cfg, totalOut, excludedNoteIDs, report)
 	}
 	nodeSnapshot, err := captureNodeAnchor(ctx, rpc, chainInfo.Height)
 	if err != nil {
@@ -215,7 +249,7 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, errors.New("txbuild: no orchard commitments")
 	}
 
-	notes, err := listUnspentOrchardNotes(ctx, rpc, cfg.MinConfirmations, cfg.Account)
+	notes, err := listUnspentOrchardNotes(ctx, rpc, int64(anchorHeight), cfg.MinConfirmations, cfg.Account)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -233,6 +267,20 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	selected, feeZat, err := selectNotesForPlan(notes, totalOut, len(cfg.Outputs), feePolicy)
 	if err != nil {
 		return types.TxPlan{}, err
+	}
+	if cfg.ExtraSpends > 0 {
+		// Only top up from notes the anchor-height index already covers, so a
+		// note mined after the anchor can't make an optional extra fail the plan.
+		indexed := make([]logic.UnspentNote, 0, len(notes))
+		for _, n := range notes {
+			if _, ok := orchard.ByOutpoint[fmt.Sprintf("%s:%d", n.TxID, n.ActionIndex)]; ok {
+				indexed = append(indexed, n)
+			}
+		}
+		selected, feeZat, *report, err = addExtraSpendsForPlan(indexed, selected, totalOut, len(cfg.Outputs), feeZat, feePolicy, cfg.ExtraSpends, cfg.ExtraSpendMaxZat, cfg.MinChangeZat)
+		if err != nil {
+			return types.TxPlan{}, err
+		}
 	}
 
 	var totalIn uint64
@@ -424,7 +472,7 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, errors.New("txbuild: no orchard commitments")
 	}
 
-	notes, err := listUnspentOrchardNotes(ctx, rpc, cfg.MinConfirmations, cfg.Account)
+	notes, err := listUnspentOrchardNotes(ctx, rpc, int64(anchorHeight), cfg.MinConfirmations, cfg.Account)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -641,7 +689,7 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 		return types.TxPlan{}, errors.New("txbuild: no orchard commitments")
 	}
 
-	notes, err := listUnspentOrchardNotes(ctx, rpc, cfg.MinConfirmations, cfg.Account)
+	notes, err := listUnspentOrchardNotes(ctx, rpc, int64(anchorHeight), cfg.MinConfirmations, cfg.Account)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -752,7 +800,7 @@ type spendableNote struct {
 	ValueZat    uint64
 }
 
-func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg PlanConfig, totalOut uint64, excludedNoteIDs map[string]struct{}) (types.TxPlan, error) {
+func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg PlanConfig, totalOut uint64, excludedNoteIDs map[string]struct{}, report *PlanReport) (types.TxPlan, error) {
 	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
@@ -778,6 +826,10 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		AddZat:     cfg.FeeAddZat,
 	}
 	selected, feeZat, err := selectNotesForPlan(unspent, totalOut, len(cfg.Outputs), feePolicy)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	selected, feeZat, *report, err = addExtraSpendsForPlan(unspent, selected, totalOut, len(cfg.Outputs), feeZat, feePolicy, cfg.ExtraSpends, cfg.ExtraSpendMaxZat, cfg.MinChangeZat)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -1400,7 +1452,7 @@ func verifySelectedNotesStillSpendable(ctx context.Context, sc *junoscan.Client,
 func notesToUnspent(ns []spendableNote) []logic.UnspentNote {
 	out := make([]logic.UnspentNote, 0, len(ns))
 	for _, n := range ns {
-		out = append(out, logic.UnspentNote{TxID: n.TxID, ActionIndex: n.ActionIndex, ValueZat: n.ValueZat})
+		out = append(out, logic.UnspentNote{TxID: n.TxID, ActionIndex: n.ActionIndex, ValueZat: n.ValueZat, Height: n.Height})
 	}
 	return out
 }
@@ -1494,7 +1546,7 @@ func is32ByteHex(s string) bool {
 	return err == nil
 }
 
-func listUnspentOrchardNotes(ctx context.Context, rpc *junocashd.Client, minConf int64, account uint32) ([]logic.UnspentNote, error) {
+func listUnspentOrchardNotes(ctx context.Context, rpc *junocashd.Client, tipHeight, minConf int64, account uint32) ([]logic.UnspentNote, error) {
 	var raw []struct {
 		TxID          string      `json:"txid"`
 		Pool          string      `json:"pool"`
@@ -1524,10 +1576,15 @@ func listUnspentOrchardNotes(ctx context.Context, rpc *junocashd.Client, minConf
 		if err != nil {
 			return nil, err
 		}
+		var height int64
+		if n.Confirmations > 0 && tipHeight >= n.Confirmations-1 {
+			height = tipHeight - n.Confirmations + 1
+		}
 		out = append(out, logic.UnspentNote{
 			TxID:        txid,
 			ActionIndex: n.OutIndex,
 			ValueZat:    v,
+			Height:      height,
 		})
 	}
 

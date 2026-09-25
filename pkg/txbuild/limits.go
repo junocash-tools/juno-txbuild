@@ -19,6 +19,14 @@ const (
 	// juno-txsign for one transaction.
 	MaxOrchardOutputs = 200
 
+	// MaxExtraSpends is the largest accepted extra spend request. A plan needs at
+	// least one base note, so extras can never exceed the signer limit minus one.
+	MaxExtraSpends = MaxOrchardSpendNotes - 1
+	// MaxTransactionFeeZat mirrors junocashd's DEFAULT_TRANSACTION_MAXFEE
+	// (0.1 coin). sendrawtransaction rejects larger fees as absurd unless
+	// allowhighfees is set, so extra spends never push the fee above it.
+	MaxTransactionFeeZat uint64 = 10_000_000
+
 	DefaultMinConfirmations int64  = 100
 	DefaultFeeMultiplier    uint64 = 20
 	// txExpiringSoonThreshold mirrors junocashd's mempool admission policy.
@@ -190,4 +198,36 @@ func selectNotesForPlan(notes []logic.UnspentNote, amountZat uint64, outputCount
 		return nil, 0, err
 	}
 	return selected, feeZat, nil
+}
+
+func validateExtraSpends(extraSpends int) error {
+	if extraSpends < 0 || extraSpends > MaxExtraSpends {
+		return types.CodedError{
+			Code:    types.ErrCodeInvalidRequest,
+			Message: fmt.Sprintf("extra_spends must be between 0 and %d", MaxExtraSpends),
+		}
+	}
+	return nil
+}
+
+// addExtraSpendsForPlan applies the optional note top-up on top of the base
+// selection. With extraSpends == 0 it returns the base selection untouched.
+func addExtraSpendsForPlan(eligible, selected []logic.UnspentNote, amountZat uint64, outputCount int, feeZat uint64, feePolicy logic.FeePolicy, extraSpends int, maxNoteZat, minChangeZat uint64) ([]logic.UnspentNote, uint64, PlanReport, error) {
+	if extraSpends <= 0 || outputCount+1 > MaxOrchardOutputs {
+		return selected, feeZat, PlanReport{}, nil
+	}
+	res, err := logic.AddExtraSpends(eligible, selected, amountZat, outputCount, feeZat, feePolicy, logic.ExtraSpendPolicy{
+		MaxExtra:        extraSpends,
+		MaxNoteValueZat: maxNoteZat,
+		MaxSpends:       MaxOrchardSpendNotes,
+		MaxFeeZat:       MaxTransactionFeeZat,
+		MinChangeZat:    minChangeZat,
+	})
+	if err != nil {
+		return nil, 0, PlanReport{}, fmt.Errorf("txbuild: extra spends: %w", err)
+	}
+	if err := ensureOrchardSpendLimit(len(res.Selected)); err != nil {
+		return nil, 0, PlanReport{}, err
+	}
+	return res.Selected, res.FeeZat, PlanReport{ExtraSpends: res.ExtraSpends, ExtraSpendZat: res.ExtraSpendZat}, nil
 }

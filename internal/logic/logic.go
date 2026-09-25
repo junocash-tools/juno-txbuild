@@ -13,6 +13,9 @@ type UnspentNote struct {
 	TxID        string
 	ActionIndex uint32
 	ValueZat    uint64
+	// Height is the block height the note was mined at, when known. It is only
+	// used as a tie-breaker for extra spend selection.
+	Height int64
 }
 
 func FilterNotesMinValue(notes []UnspentNote, minNoteZat uint64) []UnspentNote {
@@ -247,6 +250,146 @@ func SelectNotesWithFeePolicy(notes []UnspentNote, amountZat uint64, outputCount
 		}
 	}
 	return nil, 0, ErrInsufficientFunds
+}
+
+// ExtraSpendPolicy bounds the optional note top-up applied after base selection.
+type ExtraSpendPolicy struct {
+	// MaxExtra is the maximum number of notes to add on top of the base selection.
+	MaxExtra int
+	// MaxNoteValueZat only allows notes with value <= this. 0 means no cap.
+	MaxNoteValueZat uint64
+	// MaxSpends caps the total spend count of the final selection. 0 means no cap.
+	MaxSpends int
+	// MaxFeeZat caps the final fee (inclusive). 0 means no cap.
+	MaxFeeZat uint64
+	// MinChangeZat rejects extras that would leave change in (0, MinChangeZat).
+	MinChangeZat uint64
+}
+
+// ExtraSpendResult is the outcome of AddExtraSpends.
+type ExtraSpendResult struct {
+	Selected      []UnspentNote
+	FeeZat        uint64
+	ExtraSpends   int
+	ExtraSpendZat uint64
+}
+
+func noteKey(n UnspentNote) string {
+	return strings.ToLower(strings.TrimSpace(n.TxID)) + ":" + strconv.FormatUint(uint64(n.ActionIndex), 10)
+}
+
+// AddExtraSpends tops up a base selection with extra small notes so wallets
+// with many small notes shrink their note count over time.
+//
+// eligible is the full filtered spendable set the base selection was drawn
+// from, selected and feeZat are the base selection result. Candidates are the
+// eligible notes that are not already selected, ordered smallest value first,
+// then by height, then by txid and action index. A candidate is only added if
+// its value is larger than the fee increase it causes. The fee is recomputed
+// over the final spend count with a change output, so added value always ends
+// up in change. Outputs are never touched.
+func AddExtraSpends(eligible, selected []UnspentNote, amountZat uint64, outputCount int, feeZat uint64, feePolicy FeePolicy, policy ExtraSpendPolicy) (ExtraSpendResult, error) {
+	out := ExtraSpendResult{
+		Selected: append([]UnspentNote(nil), selected...),
+		FeeZat:   feeZat,
+	}
+	if policy.MaxExtra <= 0 {
+		return out, nil
+	}
+
+	var totalIn uint64
+	for _, n := range selected {
+		var ok bool
+		totalIn, ok = addUint64(totalIn, n.ValueZat)
+		if !ok {
+			return ExtraSpendResult{}, errors.New("overflow")
+		}
+	}
+	if need, ok := addUint64(amountZat, feeZat); !ok || totalIn < need {
+		return ExtraSpendResult{}, errors.New("invalid totals")
+	}
+
+	taken := make(map[string]struct{}, len(selected))
+	for _, n := range selected {
+		taken[noteKey(n)] = struct{}{}
+	}
+	candidates := make([]UnspentNote, 0, len(eligible))
+	for _, n := range eligible {
+		k := noteKey(n)
+		if _, ok := taken[k]; ok {
+			continue
+		}
+		if policy.MaxNoteValueZat > 0 && n.ValueZat > policy.MaxNoteValueZat {
+			continue
+		}
+		taken[k] = struct{}{}
+		candidates = append(candidates, n)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		a, b := candidates[i], candidates[j]
+		if a.ValueZat != b.ValueZat {
+			return a.ValueZat < b.ValueZat
+		}
+		if a.Height != b.Height {
+			return a.Height < b.Height
+		}
+		ai, bi := strings.ToLower(a.TxID), strings.ToLower(b.TxID)
+		if ai != bi {
+			return ai < bi
+		}
+		return a.ActionIndex < b.ActionIndex
+	})
+
+	curFee := feeZat
+	for _, n := range candidates {
+		if out.ExtraSpends >= policy.MaxExtra {
+			break
+		}
+		spends := len(out.Selected) + 1
+		if policy.MaxSpends > 0 && spends > policy.MaxSpends {
+			break
+		}
+		newFee, err := feePolicy.Apply(RequiredFeeSend(spends, outputCount+1))
+		if err != nil {
+			return ExtraSpendResult{}, err
+		}
+		// The fee only grows with the spend count, so nothing later can fit.
+		if policy.MaxFeeZat > 0 && newFee > policy.MaxFeeZat {
+			break
+		}
+		var delta uint64
+		if newFee > curFee {
+			delta = newFee - curFee
+		}
+		if n.ValueZat <= delta {
+			continue
+		}
+		newIn, ok := addUint64(totalIn, n.ValueZat)
+		if !ok {
+			return ExtraSpendResult{}, errors.New("overflow")
+		}
+		need, ok := addUint64(amountZat, newFee)
+		if !ok {
+			return ExtraSpendResult{}, errors.New("overflow")
+		}
+		if newIn < need {
+			continue
+		}
+		change := newIn - need
+		if policy.MinChangeZat > 0 && change > 0 && change < policy.MinChangeZat {
+			continue
+		}
+		out.Selected = append(out.Selected, n)
+		out.ExtraSpends++
+		out.ExtraSpendZat, ok = addUint64(out.ExtraSpendZat, n.ValueZat)
+		if !ok {
+			return ExtraSpendResult{}, errors.New("overflow")
+		}
+		totalIn = newIn
+		curFee = newFee
+	}
+	out.FeeZat = curFee
+	return out, nil
 }
 
 func ParseUint64Decimal(s string) (uint64, error) {
