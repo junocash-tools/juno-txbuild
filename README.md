@@ -99,6 +99,8 @@ If you provide `--scan-url` (or set `JUNO_SCAN_URL`), `juno-txbuild` will source
 
 Before reading notes, txbuild requires scanner health status `ok` and an exact scanner/node height and hash match at the captured planning anchor. Witnesses are requested at that explicit height. Before returning a plan, txbuild re-reads every selected note, verifies the same node and scanner anchor, and verifies that the node network, next-block consensus branch, and remaining expiry window are still compatible. A reorg, scanner-tip change, selected-note spend, consensus upgrade, or near-expiry plan during planning therefore fails closed. The node may advance beyond the anchor only while that anchor remains canonical, the next-block branch is unchanged, and the plan remains acceptable to the node's expiring-soon policy.
 
+txbuild only reads `status`, `scanned_height` and `scanned_hash` from `/v1/health`, so it works with scanners that do not report `event_epoch` (v1.4.x, including v1.4.7-mainnet) as well as newer ones.
+
 If `juno-scan` is configured with `-api-bearer-token`, pass `--scan-bearer-token` (or set `JUNO_SCAN_BEARER_TOKEN`) so `juno-txbuild` will include `Authorization: Bearer <token>` on all `juno-scan` requests.
 
 ## Concurrency and note reservations
@@ -167,4 +169,4 @@ Error codes are designed to be machine-readable:
 
 `make test` runs unit + integration + e2e suites (Dockerized `junocashd` regtest).
 
-The e2e suite signs and broadcasts one top-up transaction with `juno-txsign`. It uses `JUNO_TXSIGN_BIN`, or `../juno-txsign/bin/juno-txsign` by default, and fails if neither exists. Set `JUNO_TXSIGN_SKIP=1` to skip that test explicitly.
+The e2e suite signs and broadcasts top-up transactions with `juno-txsign`. It uses `JUNO_TXSIGN_BIN`, or `../juno-txsign/bin/juno-txsign` by default, and fails if neither exists. Set `JUNO_TXSIGN_SKIP=1` to skip those tests explicitly. Scanner compatibility tests run the pinned `juno-scan` v1.4.7-mainnet release in Docker (see `docker/juno-scan`).

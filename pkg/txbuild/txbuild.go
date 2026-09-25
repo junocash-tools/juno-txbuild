@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Abdullah1738/juno-sdk-go/junocashd"
 	"github.com/Abdullah1738/juno-sdk-go/junoscan"
@@ -801,11 +800,11 @@ type spendableNote struct {
 }
 
 func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg PlanConfig, totalOut uint64, excludedNoteIDs map[string]struct{}, report *PlanReport) (types.TxPlan, error) {
-	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
+	sc, scHealth, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
-	snapshot, err := captureScannerAnchor(ctx, rpc, sc, chainInfo.Height)
+	snapshot, err := captureScannerAnchor(ctx, rpc, scHealth, chainInfo.Height)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -935,7 +934,7 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 	if err := verifySelectedNotesStillSpendable(ctx, sc, cfg.WalletID, snapshot.height, cfg.MinConfirmations, cfg.MinNoteZat, selected); err != nil {
 		return types.TxPlan{}, err
 	}
-	if err := verifyScannerAnchor(ctx, rpc, sc, snapshot); err != nil {
+	if err := verifyScannerAnchor(ctx, rpc, scHealth, snapshot); err != nil {
 		return types.TxPlan{}, err
 	}
 	if err := verifyChainContext(ctx, rpc, chainInfo, snapshot, expiryHeight); err != nil {
@@ -945,11 +944,11 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 }
 
 func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg ConsolidateConfig, excludedNoteIDs map[string]struct{}) (types.TxPlan, error) {
-	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
+	sc, scHealth, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
-	snapshot, err := captureScannerAnchor(ctx, rpc, sc, chainInfo.Height)
+	snapshot, err := captureScannerAnchor(ctx, rpc, scHealth, chainInfo.Height)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -1073,7 +1072,7 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 	if err := verifySelectedNotesStillSpendable(ctx, sc, cfg.WalletID, snapshot.height, cfg.MinConfirmations, cfg.MinNoteZat, selected); err != nil {
 		return types.TxPlan{}, err
 	}
-	if err := verifyScannerAnchor(ctx, rpc, sc, snapshot); err != nil {
+	if err := verifyScannerAnchor(ctx, rpc, scHealth, snapshot); err != nil {
 		return types.TxPlan{}, err
 	}
 	if err := verifyChainContext(ctx, rpc, chainInfo, snapshot, expiryHeight); err != nil {
@@ -1083,11 +1082,11 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 }
 
 func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg SweepConfig, excludedNoteIDs map[string]struct{}) (types.TxPlan, error) {
-	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
+	sc, scHealth, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
-	snapshot, err := captureScannerAnchor(ctx, rpc, sc, chainInfo.Height)
+	snapshot, err := captureScannerAnchor(ctx, rpc, scHealth, chainInfo.Height)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -1198,7 +1197,7 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 	if err := verifySelectedNotesStillSpendable(ctx, sc, cfg.WalletID, snapshot.height, cfg.MinConfirmations, cfg.MinNoteZat, notesToUnspent(notes)); err != nil {
 		return types.TxPlan{}, err
 	}
-	if err := verifyScannerAnchor(ctx, rpc, sc, snapshot); err != nil {
+	if err := verifyScannerAnchor(ctx, rpc, scHealth, snapshot); err != nil {
 		return types.TxPlan{}, err
 	}
 	if err := verifyChainContext(ctx, rpc, chainInfo, snapshot, expiryHeight); err != nil {
@@ -1323,20 +1322,26 @@ func (t bearerAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	return next.RoundTrip(r2)
 }
 
-func newScanClient(baseURL, bearerToken string) (*junoscan.Client, error) {
-	bearerToken = strings.TrimSpace(bearerToken)
-	if bearerToken == "" {
-		return junoscan.New(baseURL)
-	}
-
-	hc := &http.Client{
-		Timeout: 15 * time.Second,
-		Transport: bearerAuthRoundTripper{
+// newScanClient returns the SDK client used for notes and witnesses plus the
+// health reader used for the anchor checks. Both share one HTTP client, so the
+// bearer token and timeout apply to every scanner request.
+func newScanClient(baseURL, bearerToken string) (*junoscan.Client, scannerHealthReader, error) {
+	hc := &http.Client{Timeout: scannerHTTPTimeout}
+	if bearerToken = strings.TrimSpace(bearerToken); bearerToken != "" {
+		hc.Transport = bearerAuthRoundTripper{
 			token: bearerToken,
 			next:  http.DefaultTransport,
-		},
+		}
 	}
-	return junoscan.New(baseURL, junoscan.WithHTTPClient(hc))
+	sc, err := junoscan.New(baseURL, junoscan.WithHTTPClient(hc))
+	if err != nil {
+		return nil, nil, err
+	}
+	health, err := newScannerHealthClient(baseURL, hc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sc, health, nil
 }
 
 func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, walletID string, tipHeight int64, minConf int64, minNoteZat uint64) ([]spendableNote, error) {

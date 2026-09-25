@@ -18,7 +18,7 @@ type scannerAnchorSnapshot struct {
 	hash   string
 }
 
-func captureScannerAnchor(ctx context.Context, rpc blockHashReader, sc *junoscan.Client, nodeHeight int64) (scannerAnchorSnapshot, error) {
+func captureScannerAnchor(ctx context.Context, rpc blockHashReader, sc scannerHealthReader, nodeHeight int64) (scannerAnchorSnapshot, error) {
 	if sc == nil {
 		return scannerAnchorSnapshot{}, errors.New("txbuild: scanner is nil")
 	}
@@ -37,7 +37,7 @@ func captureScannerAnchor(ctx context.Context, rpc blockHashReader, sc *junoscan
 	return snapshot, nil
 }
 
-func verifyScannerAnchor(ctx context.Context, rpc blockHashReader, sc *junoscan.Client, snapshot scannerAnchorSnapshot) error {
+func verifyScannerAnchor(ctx context.Context, rpc blockHashReader, sc scannerHealthReader, snapshot scannerAnchorSnapshot) error {
 	if sc == nil {
 		return errors.New("txbuild: scanner is nil")
 	}
