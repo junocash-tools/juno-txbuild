@@ -3,6 +3,7 @@ package containers
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -24,5 +25,15 @@ func TestJunocashdBuildContextIncludesDockerfile(t *testing.T) {
 	}
 	if len(raw) == 0 {
 		t.Fatal("Dockerfile is empty")
+	}
+}
+
+func TestJunoScanBuildContextIncludesDockerfile(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(junoScanBuildContext(), "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read juno-scan Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(raw), "JUNO_SCAN_VERSION="+defaultJunoScanVersion) {
+		t.Fatalf("juno-scan Dockerfile does not default to %s", defaultJunoScanVersion)
 	}
 }

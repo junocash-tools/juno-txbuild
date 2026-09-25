@@ -725,3 +725,120 @@ func TestE2E_CLI_SendManyExtraSpendsMinesUnderStrictFeePolicy(t *testing.T) {
 		}
 	}
 }
+
+// TestE2E_CLI_SendManyWithReleasedJunoScan runs send-many against the pinned
+// juno-scan v1.4.7-mainnet release (no event_epoch in /v1/health), then signs
+// and mines the topped-up plan on a strict-fee node.
+func TestE2E_CLI_SendManyWithReleasedJunoScan(t *testing.T) {
+	signer := txsignBinary(t)
+	fx := setupReleasedScanWallet(t, "secret", "-txunpaidactionlimit=0", "-blockunpaidactionlimit=0")
+
+	tmp := t.TempDir()
+	outsPath := filepath.Join(tmp, "outputs.json")
+	outs := []types.TxOutput{{ToAddress: fx.toAddr, AmountZat: "3000000"}}
+	b, err := json.Marshal(outs)
+	if err != nil {
+		t.Fatalf("marshal outputs: %v", err)
+	}
+	if err := os.WriteFile(outsPath, append(b, '\n'), 0o600); err != nil {
+		t.Fatalf("write outputs: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	bin := filepath.Join(repoRoot(), "bin", "juno-txbuild")
+	sendMany := func(extra ...string) ([]byte, error) {
+		args := []string{
+			"send-many",
+			"--rpc-url", fx.jd.RPCURL,
+			"--rpc-user", fx.jd.RPCUser,
+			"--rpc-pass", fx.jd.RPCPassword,
+			"--scan-url", fx.scan.URL,
+			"--scan-bearer-token", fx.bearerToken,
+			"--wallet-id", fx.walletID,
+			"--account", "0",
+			"--outputs-file", outsPath,
+			"--change-address", fx.changeAddr,
+			"--minconf", "1",
+			"--json",
+		}
+		return exec.CommandContext(ctx, bin, append(args, extra...)...).Output()
+	}
+
+	type envelope struct {
+		Version   string       `json:"version"`
+		Status    string       `json:"status"`
+		Data      types.TxPlan `json:"data"`
+		Selection *struct {
+			ExtraSpends   int    `json:"extra_spends"`
+			ExtraSpendZat string `json:"extra_spend_zat"`
+		} `json:"selection"`
+	}
+	run := func(extra ...string) envelope {
+		t.Helper()
+		out, err := sendMany(extra...)
+		if err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				t.Fatalf("juno-txbuild %v: %s %s", extra, strings.TrimSpace(string(out)), strings.TrimSpace(string(ee.Stderr)))
+			}
+			t.Fatalf("juno-txbuild %v: %v", extra, err)
+		}
+		var resp envelope
+		if err := json.Unmarshal(out, &resp); err != nil {
+			t.Fatalf("decode json: %v", err)
+		}
+		if resp.Version != "v1" || resp.Status != "ok" {
+			t.Fatalf("unexpected envelope: %s", out)
+		}
+		if err := validatePlanBasics(resp.Data); err != nil {
+			t.Fatalf("invalid plan: %v", err)
+		}
+		return resp
+	}
+
+	base := run()
+	if base.Selection != nil || len(base.Data.Notes) != 1 || base.Data.FeeZat != "200000" {
+		t.Fatalf("base plan: selection=%v notes=%d fee=%s", base.Selection, len(base.Data.Notes), base.Data.FeeZat)
+	}
+
+	resp := run("--extra-spends", "4", "--extra-spend-max-zat", "1000000")
+	if resp.Selection == nil || resp.Selection.ExtraSpends != 4 || resp.Selection.ExtraSpendZat != "2000000" {
+		t.Fatalf("selection=%+v want 4 extras totalling 2000000", resp.Selection)
+	}
+	plan := resp.Data
+	if len(plan.Outputs) != 1 || plan.Outputs[0] != outs[0] {
+		t.Fatalf("outputs changed: %+v", plan.Outputs)
+	}
+	if len(plan.Notes) != 5 || plan.FeeZat != "500000" {
+		t.Fatalf("plan: notes=%d fee=%s want 5/500000", len(plan.Notes), plan.FeeZat)
+	}
+	wantExtras := noteIDSet(fx.smallIDs[:4])
+	for _, n := range plan.Notes[1:] {
+		if _, ok := wantExtras[n.NoteID]; !ok {
+			t.Fatalf("unexpected extra note %q (want %v)", n.NoteID, fx.smallIDs[:4])
+		}
+	}
+
+	signed := signPlanWithNodeSeed(t, ctx, fx.jd, signer, plan)
+	var acceptedTxID string
+	if err := fx.rpc.Call(ctx, "sendrawtransaction", []any{signed.RawTxHex}, &acceptedTxID); err != nil {
+		t.Fatalf("sendrawtransaction under strict fee policy: %v", err)
+	}
+	if !strings.EqualFold(acceptedTxID, signed.TxID) {
+		t.Fatalf("txid mismatch: got %s want %s", acceptedTxID, signed.TxID)
+	}
+	if _, err := fx.jd.ExecCLI(ctx, "generate", "1"); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	after := waitSpendableOrchardNoteCountExact(t, fx.jd, 0, fx.before+6-4)
+	for _, n := range after {
+		id := planNoteID(n.TxID, n.OutIndex)
+		for _, spent := range plan.Notes {
+			if id == spent.NoteID {
+				t.Fatalf("spent note %s still unspent", id)
+			}
+		}
+	}
+}

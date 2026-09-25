@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -685,5 +686,83 @@ func TestIntegration_PlanSendManyExtraSpends(t *testing.T) {
 	}
 	if report.ExtraSpends != 0 || len(excluded.Notes) != 1 {
 		t.Fatalf("excluded small notes were topped up: report=%+v notes=%d", report, len(excluded.Notes))
+	}
+}
+
+// TestIntegration_PlanSendManyWithReleasedJunoScan plans against the pinned
+// juno-scan v1.4.7-mainnet release, whose health response has no event_epoch.
+func TestIntegration_PlanSendManyWithReleasedJunoScan(t *testing.T) {
+	fx := setupReleasedScanWallet(t, "secret")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	sdk, err := junoscan.New(fx.scan.URL, junoscan.WithBearerToken(fx.bearerToken))
+	if err != nil {
+		t.Fatalf("junoscan client: %v", err)
+	}
+	// The SDK health check rejects scanners without event_epoch. Only log it so a
+	// future SDK that tolerates the field does not fail this test.
+	if _, err := sdk.Health(ctx); err != nil && strings.Contains(err.Error(), "event_epoch") {
+		t.Logf("sdk health against %s: %v", fx.scan.Version, err)
+	}
+
+	cfg := txbuild.PlanConfig{
+		RPCURL:  fx.jd.RPCURL,
+		RPCUser: fx.jd.RPCUser,
+		RPCPass: fx.jd.RPCPassword,
+
+		ScanURL:         fx.scan.URL,
+		ScanBearerToken: fx.bearerToken,
+
+		WalletID: fx.walletID,
+		Account:  0,
+
+		Kind:          types.TxPlanKindWithdrawal,
+		Outputs:       []types.TxOutput{{ToAddress: fx.toAddr, AmountZat: "3000000"}},
+		ChangeAddress: fx.changeAddr,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	}
+
+	base, report, err := txbuild.PlanWithReport(ctx, cfg)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if err := validatePlanBasics(base); err != nil {
+		t.Fatalf("invalid plan: %v", err)
+	}
+	if report != (txbuild.PlanReport{}) || len(base.Notes) != 1 || base.FeeZat != "200000" {
+		t.Fatalf("base plan: report=%+v notes=%d fee=%s", report, len(base.Notes), base.FeeZat)
+	}
+
+	cfg.ExtraSpends = 4
+	cfg.ExtraSpendMaxZat = 1_000_000
+	plan, report, err := txbuild.PlanWithReport(ctx, cfg)
+	if err != nil {
+		t.Fatalf("plan with extra spends: %v", err)
+	}
+	if err := validatePlanBasics(plan); err != nil {
+		t.Fatalf("invalid plan: %v", err)
+	}
+	if report.ExtraSpends != 4 || report.ExtraSpendZat != 2_000_000 {
+		t.Fatalf("report=%+v want 4 extras totalling 2000000", report)
+	}
+	if len(plan.Notes) != 5 || plan.Notes[0].NoteID != base.Notes[0].NoteID || plan.FeeZat != "500000" {
+		t.Fatalf("plan: notes=%d fee=%s", len(plan.Notes), plan.FeeZat)
+	}
+	wantExtras := noteIDSet(fx.smallIDs[:4])
+	for _, n := range plan.Notes[1:] {
+		if _, ok := wantExtras[n.NoteID]; !ok {
+			t.Fatalf("unexpected extra note %q (want %v)", n.NoteID, fx.smallIDs[:4])
+		}
+	}
+
+	cfg.ScanBearerToken = "wrong"
+	_, err = txbuild.Plan(ctx, cfg)
+	var he *junoscan.HTTPError
+	if !errors.As(err, &he) || he.StatusCode != 401 {
+		t.Fatalf("expected http 401 error, got %v", err)
 	}
 }
