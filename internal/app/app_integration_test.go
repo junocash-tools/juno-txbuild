@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"testing"
@@ -571,5 +572,118 @@ func assertInsufficientBalance(t *testing.T, err error) {
 	var coded types.CodedError
 	if !errors.As(err, &coded) || coded.Code != types.ErrCodeInsufficientBalance {
 		t.Fatalf("expected insufficient_balance, got %v", err)
+	}
+}
+
+func TestIntegration_PlanSendManyExtraSpends(t *testing.T) {
+	jd, _ := startJunocashd(t)
+
+	changeAddr := unifiedAddress(t, jd, 0)
+	mineAndShieldOnce(t, jd, changeAddr)
+	before := len(listSpendableOrchardNotes(t, jd, 0))
+	fundSmallNotes(t, jd, 0, changeAddr, 6, "0.005", before+6)
+	_, toAddr := newAccountAddress(t, jd)
+
+	smallIDs := make(map[string]struct{})
+	for _, n := range listSpendableOrchardNotes(t, jd, 0) {
+		if n.ValueZat == 500_000 {
+			smallIDs[planNoteID(n.TxID, n.OutIndex)] = struct{}{}
+		}
+	}
+	if len(smallIDs) != 6 {
+		t.Fatalf("small notes=%d want 6", len(smallIDs))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	cfg := txbuild.PlanConfig{
+		RPCURL:  jd.RPCURL,
+		RPCUser: jd.RPCUser,
+		RPCPass: jd.RPCPassword,
+
+		WalletID: "test-wallet",
+		Account:  0,
+
+		Kind: types.TxPlanKindWithdrawal,
+		Outputs: []types.TxOutput{
+			{ToAddress: toAddr, AmountZat: "3000000"},
+		},
+		ChangeAddress: changeAddr,
+
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	}
+
+	legacy, err := txbuild.Plan(ctx, cfg)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	base, baseReport, err := txbuild.PlanWithReport(ctx, cfg)
+	if err != nil {
+		t.Fatalf("plan with report: %v", err)
+	}
+	legacyJSON, _ := json.Marshal(legacy)
+	baseJSON, _ := json.Marshal(base)
+	if string(legacyJSON) != string(baseJSON) {
+		t.Fatalf("extra_spends=0 changed the plan")
+	}
+	if baseReport != (txbuild.PlanReport{}) {
+		t.Fatalf("base report=%+v want zero", baseReport)
+	}
+	if len(base.Notes) != 1 {
+		t.Fatalf("base notes=%d want 1", len(base.Notes))
+	}
+	if _, ok := smallIDs[base.Notes[0].NoteID]; ok {
+		t.Fatalf("base selection unexpectedly picked a small note")
+	}
+
+	cfg.ExtraSpends = 4
+	cfg.ExtraSpendMaxZat = 1_000_000
+	plan, report, err := txbuild.PlanWithReport(ctx, cfg)
+	if err != nil {
+		t.Fatalf("plan with extra spends: %v", err)
+	}
+	if err := validatePlanBasics(plan); err != nil {
+		t.Fatalf("invalid plan: %v", err)
+	}
+	if report.ExtraSpends != 4 || report.ExtraSpendZat != 2_000_000 {
+		t.Fatalf("report=%+v want 4 extras totalling 2000000", report)
+	}
+	if len(plan.Notes) != 5 {
+		t.Fatalf("notes=%d want 5", len(plan.Notes))
+	}
+	if plan.Notes[0].NoteID != base.Notes[0].NoteID {
+		t.Fatalf("base note moved: got %q want %q", plan.Notes[0].NoteID, base.Notes[0].NoteID)
+	}
+	seen := make(map[string]struct{})
+	for _, n := range plan.Notes[1:] {
+		if _, ok := smallIDs[n.NoteID]; !ok {
+			t.Fatalf("extra note %q is not one of the small notes", n.NoteID)
+		}
+		if _, dup := seen[n.NoteID]; dup {
+			t.Fatalf("duplicate note %q", n.NoteID)
+		}
+		seen[n.NoteID] = struct{}{}
+	}
+	if plan.FeeZat != "500000" {
+		t.Fatalf("fee=%s want 500000", plan.FeeZat)
+	}
+	outJSON, _ := json.Marshal(plan.Outputs)
+	baseOutJSON, _ := json.Marshal(base.Outputs)
+	if string(outJSON) != string(baseOutJSON) || plan.ChangeAddress != base.ChangeAddress {
+		t.Fatalf("outputs or change address changed")
+	}
+
+	cfg.ExcludedNoteIDs = nil
+	for id := range smallIDs {
+		cfg.ExcludedNoteIDs = append(cfg.ExcludedNoteIDs, id)
+	}
+	excluded, report, err := txbuild.PlanWithReport(ctx, cfg)
+	if err != nil {
+		t.Fatalf("plan with excluded small notes: %v", err)
+	}
+	if report.ExtraSpends != 0 || len(excluded.Notes) != 1 {
+		t.Fatalf("excluded small notes were topped up: report=%+v notes=%d", report, len(excluded.Notes))
 	}
 }

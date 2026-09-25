@@ -542,3 +542,186 @@ func TestE2E_CLI_ConsolidateBuildsTxPlan(t *testing.T) {
 		t.Fatalf("unexpected notes length")
 	}
 }
+
+func TestE2E_CLI_SendManyExtraSpendsMinesUnderStrictFeePolicy(t *testing.T) {
+	signer := txsignBinary(t)
+
+	jd, rpc := startJunocashd(t, "-txunpaidactionlimit=0", "-blockunpaidactionlimit=0")
+
+	changeAddr := unifiedAddress(t, jd, 0)
+	mineAndShieldOnce(t, jd, changeAddr)
+	before := len(listSpendableOrchardNotes(t, jd, 0))
+	fundSmallNotes(t, jd, 0, changeAddr, 6, "0.005", before+6)
+	_, toAddr := newAccountAddress(t, jd)
+
+	var smallIDs []string
+	for _, n := range listSpendableOrchardNotes(t, jd, 0) {
+		if n.ValueZat == 500_000 {
+			smallIDs = append(smallIDs, planNoteID(n.TxID, n.OutIndex))
+		}
+	}
+	if len(smallIDs) != 6 {
+		t.Fatalf("small notes=%d want 6", len(smallIDs))
+	}
+	// Equal value and height: the tie-break is txid then action index, and
+	// all six share a txid, so the four lowest action indices get picked.
+	sortNoteIDsByActionIndex(t, smallIDs)
+	wantExtras := noteIDSet(smallIDs[:4])
+
+	tmp := t.TempDir()
+	outsPath := filepath.Join(tmp, "outputs.json")
+	outs := []types.TxOutput{{ToAddress: toAddr, AmountZat: "3000000"}}
+	b, err := json.Marshal(outs)
+	if err != nil {
+		t.Fatalf("marshal outputs: %v", err)
+	}
+	if err := os.WriteFile(outsPath, append(b, '\n'), 0o600); err != nil {
+		t.Fatalf("write outputs: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	bin := filepath.Join(repoRoot(), "bin", "juno-txbuild")
+	cmd := exec.CommandContext(
+		ctx,
+		bin,
+		"send-many",
+		"--rpc-url", jd.RPCURL,
+		"--rpc-user", jd.RPCUser,
+		"--rpc-pass", jd.RPCPassword,
+		"--wallet-id", "test-wallet",
+		"--account", "0",
+		"--outputs-file", outsPath,
+		"--change-address", changeAddr,
+		"--minconf", "1",
+		"--extra-spends", "4",
+		"--extra-spend-max-zat", "1000000",
+		"--json",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("juno-txbuild: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		t.Fatalf("juno-txbuild: %v", err)
+	}
+
+	var resp struct {
+		Version   string       `json:"version"`
+		Status    string       `json:"status"`
+		Data      types.TxPlan `json:"data"`
+		Selection struct {
+			ExtraSpends   int    `json:"extra_spends"`
+			ExtraSpendZat string `json:"extra_spend_zat"`
+		} `json:"selection"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if resp.Version != "v1" || resp.Status != "ok" {
+		t.Fatalf("unexpected envelope: %s", out)
+	}
+	if resp.Selection.ExtraSpends != 4 || resp.Selection.ExtraSpendZat != "2000000" {
+		t.Fatalf("selection=%+v want 4 extras totalling 2000000", resp.Selection)
+	}
+	plan := resp.Data
+	if err := validatePlanBasics(plan); err != nil {
+		t.Fatalf("invalid plan: %v", err)
+	}
+	if len(plan.Outputs) != 1 || plan.Outputs[0] != outs[0] {
+		t.Fatalf("outputs changed: %+v", plan.Outputs)
+	}
+	if len(plan.Notes) != 5 {
+		t.Fatalf("notes=%d want 5", len(plan.Notes))
+	}
+	for _, n := range plan.Notes[1:] {
+		if _, ok := wantExtras[strings.ToLower(n.NoteID)]; !ok {
+			t.Fatalf("unexpected extra note %q (want %v)", n.NoteID, smallIDs[:4])
+		}
+	}
+	if plan.FeeZat != "500000" {
+		t.Fatalf("fee=%s want 500000", plan.FeeZat)
+	}
+
+	// Control: the same top-up at the pre-ZIP-317 marginal rate (5000/action)
+	// must be refused by this node, so the acceptance below proves the fee.
+	underpaidOut, err := exec.CommandContext(
+		ctx,
+		bin,
+		"send-many",
+		"--rpc-url", jd.RPCURL,
+		"--rpc-user", jd.RPCUser,
+		"--rpc-pass", jd.RPCPassword,
+		"--wallet-id", "test-wallet",
+		"--account", "0",
+		"--outputs-file", outsPath,
+		"--change-address", changeAddr,
+		"--minconf", "1",
+		"--fee-multiplier", "1",
+		"--extra-spends", "4",
+		"--extra-spend-max-zat", "1000000",
+		"--json",
+	).Output()
+	if err != nil {
+		t.Fatalf("underpaid control plan: %v", err)
+	}
+	var underpaid struct {
+		Data types.TxPlan `json:"data"`
+	}
+	if err := json.Unmarshal(underpaidOut, &underpaid); err != nil {
+		t.Fatalf("decode underpaid control plan: %v", err)
+	}
+	if underpaid.Data.FeeZat != "25000" || len(underpaid.Data.Notes) != 5 {
+		t.Fatalf("underpaid control: fee=%s notes=%d want 25000/5", underpaid.Data.FeeZat, len(underpaid.Data.Notes))
+	}
+	underpaidSigned := signPlanWithNodeSeed(t, ctx, jd, signer, underpaid.Data)
+	err = rpc.Call(ctx, "sendrawtransaction", []any{underpaidSigned.RawTxHex}, nil)
+	if err == nil {
+		t.Fatalf("strict node accepted an underpaid top-up")
+	}
+	if !strings.Contains(err.Error(), "unpaid action limit exceeded") {
+		t.Fatalf("underpaid top-up rejected for the wrong reason: %v", err)
+	}
+
+	signed := signPlanWithNodeSeed(t, ctx, jd, signer, plan)
+
+	var acceptedTxID string
+	if err := rpc.Call(ctx, "sendrawtransaction", []any{signed.RawTxHex}, &acceptedTxID); err != nil {
+		t.Fatalf("sendrawtransaction under strict fee policy: %v", err)
+	}
+	if !strings.EqualFold(acceptedTxID, signed.TxID) {
+		t.Fatalf("txid mismatch: got %s want %s", acceptedTxID, signed.TxID)
+	}
+	var hashes []string
+	if err := rpc.Call(ctx, "generate", []any{1}, &hashes); err != nil || len(hashes) != 1 {
+		t.Fatalf("generate: %v", err)
+	}
+	var blk struct {
+		Tx []string `json:"tx"`
+	}
+	if err := rpc.Call(ctx, "getblock", []any{hashes[0], 1}, &blk); err != nil {
+		t.Fatalf("getblock: %v", err)
+	}
+	mined := false
+	for _, txid := range blk.Tx {
+		if strings.EqualFold(txid, signed.TxID) {
+			mined = true
+		}
+	}
+	if !mined {
+		t.Fatalf("tx %s not mined in block %s", signed.TxID, hashes[0])
+	}
+
+	// Five notes spent, one change note back: the account drops by four.
+	after := waitSpendableOrchardNoteCountExact(t, jd, 0, before+6-4)
+	for _, n := range after {
+		id := planNoteID(n.TxID, n.OutIndex)
+		for _, spent := range plan.Notes {
+			if strings.EqualFold(id, spent.NoteID) {
+				t.Fatalf("spent note %s still unspent", id)
+			}
+		}
+	}
+}

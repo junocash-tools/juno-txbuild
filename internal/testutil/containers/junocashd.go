@@ -32,7 +32,9 @@ type Junocashd struct {
 	c testcontainers.Container
 }
 
-func StartJunocashd(ctx context.Context) (*Junocashd, error) {
+// StartJunocashd starts a regtest junocashd. extraArgs are appended to the
+// default daemon arguments, for example to tighten fee policy.
+func StartJunocashd(ctx context.Context, extraArgs ...string) (*Junocashd, error) {
 	version := defaultJunocashVersion
 	rpcUser := defaultRPCUser
 	rpcPass := defaultRPCPassword
@@ -51,7 +53,7 @@ func StartJunocashd(ctx context.Context) (*Junocashd, error) {
 			},
 		},
 		ExposedPorts: []string{"8232/tcp"},
-		Cmd: []string{
+		Cmd: append([]string{
 			"-regtest",
 			"-server=1",
 			"-daemon=0",
@@ -63,7 +65,7 @@ func StartJunocashd(ctx context.Context) (*Junocashd, error) {
 			"-rpcport=8232",
 			"-rpcuser=" + rpcUser,
 			"-rpcpassword=" + rpcPass,
-		},
+		}, extraArgs...),
 		WaitingFor: wait.ForListeningPort(nat.Port("8232/tcp")).WithStartupTimeout(3 * time.Minute),
 	}
 

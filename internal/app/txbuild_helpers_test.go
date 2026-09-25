@@ -34,12 +34,12 @@ func expectedCoinType(chain string) (uint32, bool) {
 	}
 }
 
-func startJunocashd(t *testing.T) (*containers.Junocashd, *junocashd.Client) {
+func startJunocashd(t *testing.T, extraArgs ...string) (*containers.Junocashd, *junocashd.Client) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	t.Cleanup(cancel)
 
-	jd, err := containers.StartJunocashd(ctx)
+	jd, err := containers.StartJunocashd(ctx, extraArgs...)
 	if err != nil {
 		t.Fatalf("start junocashd: %v", err)
 	}
