@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.8.0 (2026-10-01)
+
+- Add opt-in change splitting to `send-many` and `rebalance` through `--split-change <n>` and `--split-change-min-zat <zat>` (Go: `PlanConfig.SplitChange`, `PlanConfig.SplitChangeMinZat`, `PlanReport.ChangeNotes`). The change is spread over up to `n` notes paid to the change address so a hot wallet keeps enough notes to fund parallel withdrawals. The split notes are appended to `outputs` after the requested outputs; the signer's change output keeps the remainder. The count is lowered until each piece clears the minimum and the fee stays within 200 outputs and 10,000,000 zat. The JSON envelope reports `selection.change_notes` when enabled.
+
 ## v1.7.1 (2026-09-25)
 
 - Accept `juno-scan` health responses without `event_epoch`. v1.7.0 rejected every scanner-backed plan against `juno-scan` v1.4.x (including v1.4.7-mainnet) with `junoscan: invalid event_epoch`. txbuild does not read wallet events, so it now ignores that field; status, height and hash checks are unchanged.

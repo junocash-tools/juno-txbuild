@@ -231,3 +231,73 @@ func addExtraSpendsForPlan(eligible, selected []logic.UnspentNote, amountZat uin
 	}
 	return res.Selected, res.FeeZat, PlanReport{ExtraSpends: res.ExtraSpends, ExtraSpendZat: res.ExtraSpendZat}, nil
 }
+
+// MaxSplitChange is the largest accepted change split. A plan needs at least
+// one requested output, so at most MaxOrchardOutputs-1 change notes fit.
+const MaxSplitChange = MaxOrchardOutputs - 1
+
+func validateSplitChange(splitChange int, changeAddress string) error {
+	if splitChange < 0 || splitChange > MaxSplitChange {
+		return types.CodedError{
+			Code:    types.ErrCodeInvalidRequest,
+			Message: fmt.Sprintf("split_change must be between 0 and %d", MaxSplitChange),
+		}
+	}
+	if splitChange > 1 && strings.TrimSpace(changeAddress) == "" {
+		return types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "split_change requires change_address"}
+	}
+	return nil
+}
+
+// applySplitChange spreads the change over up to splitChange notes paid to
+// changeAddress. The first n-1 notes are appended to outputs with equal value;
+// the signer's change output keeps the remainder, so it is never smaller than
+// the other pieces. Every added output costs ZIP-317 fee, so the count is
+// lowered until each piece clears the minimum and the fee stays within the
+// node limit. It returns the plan outputs, the fee and the number of change
+// notes (0 without change).
+func applySplitChange(outputs []types.TxOutput, changeAddress string, spendCount int, totalIn, totalOut, feeZat uint64, hasChange bool, feePolicy logic.FeePolicy, splitChange int, splitMinZat, minChangeZat uint64) ([]types.TxOutput, uint64, int, error) {
+	if !hasChange {
+		return outputs, feeZat, 0, nil
+	}
+	if splitChange < 2 {
+		return outputs, feeZat, 1, nil
+	}
+	if totalIn < totalOut {
+		return nil, 0, 0, errors.New("txbuild: invalid transaction totals")
+	}
+	remaining := totalIn - totalOut
+	minPiece := splitMinZat
+	if minChangeZat > minPiece {
+		minPiece = minChangeZat
+	}
+	if minPiece == 0 {
+		minPiece = 1
+	}
+	for n := splitChange; n >= 2; n-- {
+		if len(outputs)+n > MaxOrchardOutputs {
+			continue
+		}
+		fee, err := feePolicy.Apply(logic.RequiredFeeSend(spendCount, len(outputs)+n))
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("txbuild: split change fee: %w", err)
+		}
+		if fee < feeZat {
+			fee = feeZat
+		}
+		if fee > MaxTransactionFeeZat || remaining <= fee {
+			continue
+		}
+		piece := (remaining - fee) / uint64(n)
+		if piece < minPiece {
+			continue
+		}
+		split := make([]types.TxOutput, 0, len(outputs)+n-1)
+		split = append(split, outputs...)
+		for i := 0; i < n-1; i++ {
+			split = append(split, types.TxOutput{ToAddress: changeAddress, AmountZat: strconv.FormatUint(piece, 10)})
+		}
+		return split, fee, n, nil
+	}
+	return outputs, feeZat, 1, nil
+}

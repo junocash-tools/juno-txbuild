@@ -68,10 +68,10 @@ func writeUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> --amount-zat <zat> --change-address <j*1..> [--exclude-note-id <txid:index>]... [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--exclude-note-id <txid:index>]... [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--extra-spends <n>] [--extra-spend-max-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--exclude-note-id <txid:index>]... [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--extra-spends <n>] [--extra-spend-max-zat <zat>] [--split-change <n>] [--split-change-min-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--exclude-note-id <txid:index>]... [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "  juno-txbuild consolidate --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--exclude-note-id <txid:index>]... [--memo-hex <hex>] [--max-spends <2..200>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--exclude-note-id <txid:index>]... [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--extra-spends <n>] [--extra-spend-max-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--exclude-note-id <txid:index>]... [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--extra-spends <n>] [--extra-spend-max-zat <zat>] [--split-change <n>] [--split-change-min-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintf(w, "Defaults: --minconf %d, --fee-multiplier %d; signer limit: %d inputs and %d total outputs including change.\n", txbuild.DefaultMinConfirmations, txbuild.DefaultFeeMultiplier, txbuild.MaxOrchardSpendNotes, txbuild.MaxOrchardOutputs)
 	fmt.Fprintln(w, "")
@@ -458,6 +458,8 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	var minNoteZat uint64
 	var extraSpends int
 	var extraSpendMaxZat uint64
+	var splitChange int
+	var splitChangeMinZat uint64
 
 	var outPath string
 	var jsonOut bool
@@ -475,6 +477,8 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	fs.StringVar(&outputsFile, "outputs-file", "", "path to JSON array of TxOutputs (or - for stdin)")
 	fs.IntVar(&extraSpends, "extra-spends", 0, "add up to n extra small notes on top of the selection (0 = off)")
 	fs.Uint64Var(&extraSpendMaxZat, "extra-spend-max-zat", 0, "only add extra notes with value <= this (0 = no cap)")
+	fs.IntVar(&splitChange, "split-change", 0, "split change into up to n notes paid to the change address (0 or 1 = single change note)")
+	fs.Uint64Var(&splitChangeMinZat, "split-change-min-zat", 0, "smallest change note created by --split-change")
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...)")
 	fs.Uint64Var(&feeMultiplier, "fee-multiplier", txbuild.DefaultFeeMultiplier, "multiplies the ZIP-317 base fee (>=1; default 20)")
 	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
@@ -496,6 +500,9 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	}
 	if extraSpends < 0 || extraSpends > txbuild.MaxExtraSpends {
 		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, fmt.Sprintf("extra-spends must be between 0 and %d", txbuild.MaxExtraSpends))
+	}
+	if splitChange < 0 || splitChange > txbuild.MaxSplitChange {
+		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, fmt.Sprintf("split-change must be between 0 and %d", txbuild.MaxSplitChange))
 	}
 
 	outputsFile = strings.TrimSpace(outputsFile)
@@ -558,6 +565,9 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 
 		ExtraSpends:      extraSpends,
 		ExtraSpendMaxZat: extraSpendMaxZat,
+
+		SplitChange:       splitChange,
+		SplitChangeMinZat: splitChangeMinZat,
 	})
 	if err != nil {
 		var ce types.CodedError
@@ -568,20 +578,26 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	}
 
 	var selection *selectionReport
-	if extraSpends > 0 {
+	if extraSpends > 0 || splitChange > 1 {
 		selection = &selectionReport{
 			ExtraSpends:   report.ExtraSpends,
 			ExtraSpendZat: strconv.FormatUint(report.ExtraSpendZat, 10),
+		}
+		if splitChange > 1 {
+			changeNotes := report.ChangeNotes
+			selection.ChangeNotes = &changeNotes
 		}
 	}
 	return writePlanWithSelection(stdout, stderr, jsonOut, outPath, plan, selection)
 }
 
-// selectionReport is added to the --json envelope when extra spends were
-// requested. It sits next to "data" so the TxPlan itself stays unchanged.
+// selectionReport is added to the --json envelope when extra spends or a
+// change split were requested. It sits next to "data" so the TxPlan itself stays unchanged.
 type selectionReport struct {
 	ExtraSpends   int    `json:"extra_spends"`
 	ExtraSpendZat string `json:"extra_spend_zat"`
+	// ChangeNotes is set when --split-change was requested.
+	ChangeNotes *int `json:"change_notes,omitempty"`
 }
 
 func loadOutputs(path string) ([]types.TxOutput, error) {
@@ -636,6 +652,9 @@ func writePlanWithSelection(stdout, stderr io.Writer, jsonOut bool, outPath stri
 	}
 	if selection != nil {
 		fmt.Fprintf(stderr, "extra_spends=%d extra_spend_zat=%s\n", selection.ExtraSpends, selection.ExtraSpendZat)
+		if selection.ChangeNotes != nil {
+			fmt.Fprintf(stderr, "change_notes=%d\n", *selection.ChangeNotes)
+		}
 	}
 
 	_, _ = stdout.Write(b)

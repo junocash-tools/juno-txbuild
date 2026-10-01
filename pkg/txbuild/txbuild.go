@@ -118,6 +118,15 @@ type PlanConfig struct {
 	ExtraSpends int
 	// ExtraSpendMaxZat only allows extra notes with value <= this. 0 means no cap.
 	ExtraSpendMaxZat uint64
+
+	// SplitChange splits the change into up to this many notes, all paid to
+	// ChangeAddress. The first n-1 are appended to Outputs with equal value and
+	// the signer's change output takes the remainder. The planner lowers n until
+	// every piece clears SplitChangeMinZat and MinChangeZat and the fee stays
+	// under the node limit. 0 or 1 keeps a single change note.
+	SplitChange int
+	// SplitChangeMinZat is the smallest change piece worth creating. 0 means 1 zat.
+	SplitChangeMinZat uint64
 }
 
 // PlanReport describes planner decisions that are not part of the TxPlan.
@@ -126,6 +135,11 @@ type PlanReport struct {
 	ExtraSpends int
 	// ExtraSpendZat is the total value of those notes.
 	ExtraSpendZat uint64
+	// ChangeNotes is set only when change splitting was requested: the number
+	// of change notes the plan creates (0 without change, 1 when no split fits,
+	// or the split count). Split outputs are the trailing ChangeNotes-1 entries of
+	// TxPlan.Outputs.
+	ChangeNotes int
 }
 
 func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
@@ -166,6 +180,9 @@ func planOutputs(ctx context.Context, cfg PlanConfig, report *PlanReport) (types
 		return types.TxPlan{}, err
 	}
 	if err := validateExtraSpends(cfg.ExtraSpends); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := validateSplitChange(cfg.SplitChange, cfg.ChangeAddress); err != nil {
 		return types.TxPlan{}, err
 	}
 	switch cfg.Kind {
@@ -298,6 +315,13 @@ func planOutputs(ctx context.Context, cfg PlanConfig, report *PlanReport) (types
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+	txOutputs, feeZat, changeNotes, err := applySplitChange(cfg.Outputs, cfg.ChangeAddress, len(selected), totalIn, totalOut, feeZat, hasChange, feePolicy, cfg.SplitChange, cfg.SplitChangeMinZat, cfg.MinChangeZat)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if cfg.SplitChange > 1 {
+		report.ChangeNotes = changeNotes
+	}
 
 	positions := make([]uint32, 0, len(selected))
 	planNotes := make([]types.OrchardSpendNote, 0, len(selected))
@@ -350,7 +374,7 @@ func planOutputs(ctx context.Context, cfg PlanConfig, report *PlanReport) (types
 		AnchorHeight:  anchorHeight,
 		Anchor:        wit.Root,
 		ExpiryHeight:  expiryHeight,
-		Outputs:       cfg.Outputs,
+		Outputs:       txOutputs,
 		ChangeAddress: cfg.ChangeAddress,
 		FeeZat:        strconv.FormatUint(feeZat, 10),
 		Notes:         planNotes,
@@ -849,6 +873,13 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+	txOutputs, feeZat, changeNotes, err := applySplitChange(cfg.Outputs, cfg.ChangeAddress, len(selected), totalIn, totalOut, feeZat, hasChange, feePolicy, cfg.SplitChange, cfg.SplitChangeMinZat, cfg.MinChangeZat)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if cfg.SplitChange > 1 {
+		report.ChangeNotes = changeNotes
+	}
 
 	noteByOutpoint := make(map[string]spendableNote, len(notes))
 	for _, n := range notes {
@@ -922,7 +953,7 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		AnchorHeight:  uint32(wit.AnchorHeight),
 		Anchor:        wit.Root,
 		ExpiryHeight:  expiryHeight,
-		Outputs:       cfg.Outputs,
+		Outputs:       txOutputs,
 		ChangeAddress: cfg.ChangeAddress,
 		FeeZat:        strconv.FormatUint(feeZat, 10),
 		Notes:         planNotes,

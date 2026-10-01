@@ -190,6 +190,50 @@ func TestSendManyRejectsExtraSpendsOutsideRangeBeforeRPC(t *testing.T) {
 	}
 }
 
+func TestSendManyRejectsSplitChangeOutsideRangeBeforeRPC(t *testing.T) {
+	for _, cmd := range []string{"send-many", "rebalance"} {
+		for _, value := range []string{"-1", "200"} {
+			t.Run(cmd+"/"+value, func(t *testing.T) {
+				var out, errBuf bytes.Buffer
+				code := RunWithIO([]string{
+					cmd,
+					"--rpc-url", "http://127.0.0.1:1",
+					"--wallet-id", "hot",
+					"--outputs-file", "unused.json",
+					"--change-address", "change",
+					"--split-change", value,
+					"--json",
+				}, &out, &errBuf)
+				if code != 1 {
+					t.Fatalf("exit code=%d stderr=%q", code, errBuf.String())
+				}
+				var envelope struct {
+					Error struct {
+						Code    string `json:"code"`
+						Message string `json:"message"`
+					} `json:"error"`
+				}
+				if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+					t.Fatalf("decode error envelope: %v", err)
+				}
+				if envelope.Error.Code != string(types.ErrCodeInvalidRequest) || !strings.Contains(envelope.Error.Message, "split-change must be between 0 and 199") {
+					t.Fatalf("unexpected error: %+v", envelope.Error)
+				}
+			})
+		}
+	}
+}
+
+func TestUsageDocumentsSplitChangeFlags(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	if code := RunWithIO([]string{"--help"}, &out, &errBuf); code != 0 {
+		t.Fatalf("exit code=%d", code)
+	}
+	if strings.Count(out.String(), "[--split-change <n>] [--split-change-min-zat <zat>]") != 2 {
+		t.Fatalf("usage missing split change flags for send-many and rebalance:\n%s", out.String())
+	}
+}
+
 func TestUsageDocumentsExtraSpendFlags(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	if code := RunWithIO([]string{"--help"}, &out, &errBuf); code != 0 {
@@ -259,5 +303,32 @@ func TestWritePlanWithSelection_JSONEnvelope(t *testing.T) {
 	var rawPlan types.TxPlan
 	if err := json.Unmarshal(raw.Bytes(), &rawPlan); err != nil || rawPlan.FeeZat != "500000" {
 		t.Fatalf("raw plan output invalid: %v %q", err, raw.String())
+	}
+}
+
+func TestWritePlanWithSelection_ChangeNotes(t *testing.T) {
+	plan := types.TxPlan{Version: types.V0, Kind: types.TxPlanKindWithdrawal, FeeZat: "500000"}
+	changeNotes := 4
+	sel := &selectionReport{ExtraSpendZat: "0", ChangeNotes: &changeNotes}
+	var out, errBuf bytes.Buffer
+	if code := writePlanWithSelection(&out, &errBuf, true, "", plan, sel); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if !strings.Contains(out.String(), `"change_notes":4`) {
+		t.Fatalf("missing change_notes: %s", out.String())
+	}
+	out.Reset()
+	if code := writePlanWithSelection(&out, &errBuf, true, "", plan, &selectionReport{ExtraSpends: 1, ExtraSpendZat: "5"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if strings.Contains(out.String(), "change_notes") {
+		t.Fatalf("change_notes must be omitted without a split: %s", out.String())
+	}
+	var raw, stderr bytes.Buffer
+	if code := writePlanWithSelection(&raw, &stderr, false, "", plan, sel); code != 0 {
+		t.Fatalf("raw exit=%d", code)
+	}
+	if !strings.Contains(stderr.String(), "change_notes=4") {
+		t.Fatalf("stderr=%q", stderr.String())
 	}
 }

@@ -308,6 +308,24 @@ func TestPlanWithScanExtraSpends(t *testing.T) {
 	if report.ExtraSpends != 4 || report.ExtraSpendZat != 1_550_000 {
 		t.Fatalf("report=%+v", report)
 	}
+
+	// Change split on the same base selection: f (20,000,000) pays 10,000,000.
+	// 2 payments + 3 change notes = 5 actions -> fee 500,000; the change of
+	// 9,500,000 becomes two outputs of 3,166,666 plus the signer change.
+	cfg.ExtraSpends = 0
+	cfg.ExtraSpendMaxZat = 0
+	cfg.SplitChange = 3
+	split, splitReport, _ := run(cfg)
+	if len(split.Notes) != 1 || split.FeeZat != "500000" || splitReport.ChangeNotes != 3 {
+		t.Fatalf("split notes=%d fee=%s report=%+v", len(split.Notes), split.FeeZat, splitReport)
+	}
+	wantOutputs := append(append([]types.TxOutput(nil), outputs...),
+		types.TxOutput{ToAddress: "change", AmountZat: "3166666"},
+		types.TxOutput{ToAddress: "change", AmountZat: "3166666"},
+	)
+	if !reflect.DeepEqual(split.Outputs, wantOutputs) || split.ChangeAddress != "change" {
+		t.Fatalf("split outputs=%+v", split.Outputs)
+	}
 }
 
 func jsonInt(v int64) string {

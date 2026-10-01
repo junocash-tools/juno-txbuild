@@ -79,6 +79,17 @@ With `--json`, the envelope reports what was added next to `data`:
 
 `extra_spend_zat` is a decimal string, like the other zat amounts. Without `--json`, the same numbers are written to stderr. With the default `--extra-spends 0`, selection, the plan and the envelope are unchanged. Go callers can set `PlanConfig.ExtraSpends` and `PlanConfig.ExtraSpendMaxZat` and use `PlanWithReport` to read the counts.
 
+## Change splitting (note fan-out)
+
+Orchard notes are spent whole, so a wallet with one large note can only fund one withdrawal at a time until the change is mined. `send-many` and `rebalance` can split the change into several notes so later withdrawals have more notes to pick from:
+
+- `--split-change <n>`: create up to `n` change notes (default `0` = one change note as before, max `199`).
+- `--split-change-min-zat <zat>`: smallest change note worth creating (default `0` = 1 zat). `--min-change-zat` is also respected.
+
+Selection runs first, unchanged, including any extra spends. If the plan has change, txbuild appends `n-1` outputs of equal value to the change address after the requested outputs, recomputes the fee for the extra actions, and leaves the remainder to the signer's normal change output, so that note is never smaller than the others. If the pieces would fall below the minimum, the fee would exceed 10,000,000 zat, or the plan would exceed 200 outputs, `n` is lowered until it fits; when nothing fits the plan keeps a single change note. Requested outputs and their order never change.
+
+With `--json`, the envelope reports `selection.change_notes`: `0` when the plan has no change, otherwise the number of change notes created. Go callers set `PlanConfig.SplitChange` and `PlanConfig.SplitChangeMinZat` and read `PlanReport.ChangeNotes`.
+
 ## Transaction expiry
 
 All `TxPlan`s include `expiry_height` (Overwinter `nExpiryHeight`) so transactions that are not mined will eventually become invalid.
